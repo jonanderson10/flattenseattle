@@ -1,8 +1,8 @@
 """Tests for corridor scoring and merging."""
 import pandas as pd
 
-from sf_flat_routes.config import ANALYSIS
-from sf_flat_routes.corridors import _canonical_name, _clean_names, score_edges
+from flatten_seattle.config import ANALYSIS
+from flatten_seattle.corridors import _canonical_name, _clean_names, score_edges
 
 
 def edge_table(rows):

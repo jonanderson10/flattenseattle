@@ -2,8 +2,8 @@
 import numpy as np
 import pytest
 
-from sf_flat_routes.config import ELEVATION, GRADE_THRESHOLDS
-from sf_flat_routes.metrics import (cumulative_gain_loss, deadband_filter,
+from flatten_seattle.config import ELEVATION, GRADE_THRESHOLDS
+from flatten_seattle.metrics import (cumulative_gain_loss, deadband_filter,
                                     directional_metrics, distance_above,
                                     interval_grades, prune_reversal_indices,
                                     rectify_profile, weighted_percentile)

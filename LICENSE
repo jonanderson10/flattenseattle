@@ -27,12 +27,12 @@ redistributed by this project carries its own terms:
 
   * Street geometry and attributes derive from OpenStreetMap via Overture
     Maps and are (c) OpenStreetMap contributors, licensed ODbL 1.0. Derived
-    street geometry in this repository -- including outputs/*.geojson,
-    outputs/flat_corridors.*, data/processed/edges_*.parquet and the
-    interactive HTML map -- carries ODbL share-alike obligations.
+    street geometry in this repository -- including the street graph in
+    site/data/, outputs/flatten_seattle.html and
+    data/processed/edges_*.parquet -- carries ODbL share-alike obligations.
   * Elevation data is USGS 3DEP, a work of the U.S. Government in the public
     domain.
-  * San Francisco neighborhood boundaries are open data published by the
-    City & County of San Francisco.
-  * sf_flat_routes/vendor/ contains Leaflet 1.9.4, (c) Vladimir Agafonkin and
+  * Seattle neighborhood boundaries and SDOT bike facilities are open data
+    published by the City of Seattle.
+  * flatten_seattle/vendor/ contains Leaflet 1.9.4, (c) Vladimir Agafonkin and
     CloudMade, licensed BSD-2-Clause.

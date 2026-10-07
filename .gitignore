@@ -1,11 +1,11 @@
 # Cached source and intermediate data: large, and fully reproducible with
-#   python -m sf_flat_routes download
-#   python -m sf_flat_routes build-network
+#   python -m flatten_seattle download
+#   python -m flatten_seattle build-network
 data/raw/
 data/processed/
 data/sf_baseline/
 
-# Regenerable and bulky; rebuild with `python -m sf_flat_routes analyze`
+# Regenerable and bulky; rebuild with `python -m flatten_seattle analyze`
 outputs/lowland_basins.geojson
 
 __pycache__/

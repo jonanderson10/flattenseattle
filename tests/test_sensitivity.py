@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def _config_in_subprocess(env_extra: dict) -> dict:
     """Import the config in a fresh interpreter under the given environment."""
     code = (
-        "import json; from sf_flat_routes import config as c, elevation as e\n"
+        "import json; from flatten_seattle import config as c, elevation as e\n"
         "print(json.dumps({'spacing': c.ELEVATION.sample_spacing_m,"
         " 'sigma': c.ELEVATION.dem_sigma_m, 'sigma_mod': e.DEM_SMOOTH_SIGMA_M,"
         " 'rank': c.ANALYSIS.point_rank, 'processed': str(c.PROCESSED_DIR),"
@@ -95,7 +95,7 @@ def _fake_row(tag, **over):
 
 
 def test_writer_produces_csv_and_markdown(tmp_path, monkeypatch):
-    from sf_flat_routes import sensitivity as S
+    from flatten_seattle import sensitivity as S
     monkeypatch.setattr(S, "SENS_CSV", tmp_path / "s.csv")
     monkeypatch.setattr(S, "SENS_MD", tmp_path / "s.md")
     monkeypatch.setattr(S, "RUNS_DIR", tmp_path / "no-runs")   # no run dirs
@@ -118,14 +118,14 @@ def test_writer_produces_csv_and_markdown(tmp_path, monkeypatch):
 
 
 def test_jaccard():
-    from sf_flat_routes.sensitivity import _jaccard
+    from flatten_seattle.sensitivity import _jaccard
     assert _jaccard(["a", "b"], ["a", "b"]) == 1.0
     assert _jaccard(["a", "b"], ["b", "c"]) == pytest.approx(1 / 3)
     assert _jaccard([], []) == 1.0
 
 
 def test_edge_overlap_is_length_weighted():
-    from sf_flat_routes.sensitivity import _edge_overlap, _lead_streets
+    from flatten_seattle.sensitivity import _edge_overlap, _lead_streets
     a = {1: 100.0, 2: 300.0}
     b = {2: 300.0, 3: 100.0}
     # shared 300 of a 500 m union
@@ -139,7 +139,7 @@ def test_edge_overlap_is_length_weighted():
 
 
 def test_grid_is_one_at_a_time_around_the_baseline():
-    from sf_flat_routes.sensitivity import BASELINE, GRID
+    from flatten_seattle.sensitivity import BASELINE, GRID
     tags = [t for t, _, _ in GRID]
     assert tags[0] == "baseline" and len(set(tags)) == len(tags)
     for tag, over, why in GRID[1:]:

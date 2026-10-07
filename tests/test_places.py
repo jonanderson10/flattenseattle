@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sf_flat_routes import places
-from sf_flat_routes.config import CITY_BBOX
-from sf_flat_routes.download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
+from flatten_seattle import places
+from flatten_seattle.config import CITY_BBOX
+from flatten_seattle.download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
 
 
 def test_street_names_are_title_cased_with_suffixes_kept_short():

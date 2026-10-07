@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sf-flat-routes"
+name = "flatten-seattle"
 version = "1.0.0"
-description = "Discovering San Francisco's low-elevation street network: flat-route modelling, corridor detection and pass analysis"
+description = "Flatten Seattle: the flattest walking and biking routes across Seattle"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
@@ -32,13 +32,13 @@ dependencies = [
 dev = ["pytest>=7.4", "playwright>=1.40", "pyflakes>=3.0"]
 
 [project.scripts]
-sf-flat-routes = "sf_flat_routes.__main__:main"
+flatten-seattle = "flatten_seattle.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["sf_flat_routes*"]
+include = ["flatten_seattle*"]
 
 [tool.setuptools.package-data]
-sf_flat_routes = ["web/*", "vendor/*"]
+flatten_seattle = ["web/*", "vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

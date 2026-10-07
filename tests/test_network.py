@@ -1,7 +1,7 @@
 """Tests for access-rule interpretation and graph construction."""
 import numpy as np
 
-from sf_flat_routes.network import _as_dict, _as_list, _flags, evaluate_access
+from flatten_seattle.network import _as_dict, _as_list, _flags, evaluate_access
 
 
 def rule(access_type, mode=None, heading=None, during=None, between=None,
@@ -135,7 +135,7 @@ def test_flags_of_empty_input():
 # ------------------------------------------------- the built graph (if present)
 import pytest  # noqa: E402
 
-from sf_flat_routes.config import PROCESSED_DIR  # noqa: E402
+from flatten_seattle.config import PROCESSED_DIR  # noqa: E402
 
 
 @pytest.mark.skipif(not (PROCESSED_DIR / "edges_metrics.parquet").exists(),
@@ -160,7 +160,7 @@ def test_pass_through_pieces_of_a_segment_are_merged():
     import geopandas as gpd
     from shapely.geometry import LineString
 
-    from sf_flat_routes.network import merge_pass_through_nodes
+    from flatten_seattle.network import merge_pass_through_nodes
 
     rows = [
         # segment s: a -- b -- c -- d ; b is pass-through, c meets segment t

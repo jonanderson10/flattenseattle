@@ -4,8 +4,8 @@ import json
 import numpy as np
 import pytest
 
-from sf_flat_routes.viz_interactive import _round_geometry
-from sf_flat_routes.viz_static import hillshade
+from flatten_seattle.viz_interactive import _round_geometry
+from flatten_seattle.viz_static import hillshade
 
 # Polyline encoding now lives in the browser payload packer; its tests are in
 # tests/test_webgraph.py.

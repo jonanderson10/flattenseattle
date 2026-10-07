@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-import sf_flat_routes.passes as P
+import flatten_seattle.passes as P
 
 
 def toy_edges():

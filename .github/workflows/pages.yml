@@ -10,7 +10,7 @@ name: Deploy the route finder
 
 on:
   push:
-    branches: [main, claude/sf-flat-routes-analysis-e33in5]
+    branches: [main, seattle]
     paths: ["site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 

@@ -5,7 +5,7 @@ import gzip
 import numpy as np
 import pytest
 
-from sf_flat_routes.webgraph import (CM, DM, GRADE_Q, _b64, _i16, _u16,
+from flatten_seattle.webgraph import (CM, DM, GRADE_Q, _b64, _i16, _u16,
                                      bundle, encode_polyline)
 
 

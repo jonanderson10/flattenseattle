@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sf_flat_routes.config import MIN_RELIABLE_GRADE_LENGTH_M, PROCESSED_DIR
+from flatten_seattle.config import MIN_RELIABLE_GRADE_LENGTH_M, PROCESSED_DIR
 
 EDGES = PROCESSED_DIR / "edges_metrics.parquet"
 DIRECTED = PROCESSED_DIR / "edges_directed.parquet"
@@ -15,7 +15,7 @@ PAIRS = PROCESSED_DIR / "neighborhood_pairs.parquet"
 
 pytestmark = pytest.mark.skipif(
     not (EDGES.exists() and DIRECTED.exists()),
-    reason="processed data not built; run `python -m sf_flat_routes all`")
+    reason="processed data not built; run `python -m flatten_seattle all`")
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +58,7 @@ def test_gain_minus_loss_equals_net_change(directed):
 
 
 def test_no_edge_exceeds_the_plausible_grade_clip(edges):
-    from sf_flat_routes.config import ELEVATION
+    from flatten_seattle.config import ELEVATION
     assert edges["max_abs_grade"].max() <= ELEVATION.max_plausible_grade + 1e-9
 
 
@@ -154,7 +154,7 @@ def test_ballard_locks_stay_crossable(edges, directed, mode):
     import geopandas as gpd
     import shapely
 
-    from sf_flat_routes.routing import build_route_graph, shortest_paths
+    from flatten_seattle.routing import build_route_graph, shortest_paths
 
     g = build_route_graph(directed, mode)
     ends = pd.concat([

@@ -2,9 +2,9 @@
 import pandas as pd
 import pytest
 
-from sf_flat_routes.config import (GRADE_THRESHOLDS, ROUTING_PROFILES,
+from flatten_seattle.config import (GRADE_THRESHOLDS, ROUTING_PROFILES,
                                    CostWeights, profile, with_alpha)
-from sf_flat_routes.routing import (build_route_graph, edge_costs, route,
+from flatten_seattle.routing import (build_route_graph, edge_costs, route,
                                     summarise_route)
 
 _TH = [int(t * 100) for t in GRADE_THRESHOLDS]
@@ -213,7 +213,7 @@ def test_empty_route_summary_is_all_zero():
 
 
 def test_with_scale_zero_is_pure_distance():
-    from sf_flat_routes.config import with_scale
+    from flatten_seattle.config import with_scale
     w = with_scale(profile("balanced"), 0.0)
     assert w.alpha == 0 and w.beta == 0 and w.gamma == 0
     assert w.use_class_multiplier is False
@@ -225,7 +225,7 @@ def test_with_scale_zero_is_pure_distance():
 
 
 def test_with_scale_one_is_the_profile_itself():
-    from sf_flat_routes.config import with_scale
+    from flatten_seattle.config import with_scale
     base = profile("balanced")
     w = with_scale(base, 1.0)
     assert (w.alpha, w.beta, w.gamma) == (base.alpha, base.beta, base.gamma)
@@ -233,6 +233,6 @@ def test_with_scale_one_is_the_profile_itself():
 
 
 def test_pareto_sweep_starts_at_zero_and_is_increasing():
-    from sf_flat_routes.config import PARETO_LAMBDA_SWEEP
+    from flatten_seattle.config import PARETO_LAMBDA_SWEEP
     assert PARETO_LAMBDA_SWEEP[0] == 0.0
     assert list(PARETO_LAMBDA_SWEEP) == sorted(PARETO_LAMBDA_SWEEP)

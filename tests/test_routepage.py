@@ -1,6 +1,6 @@
 """End-to-end test of the route page (the shareable map).
 
-Drives ``outputs/sf_flat_route_finder.html`` in a headless browser: the page
+Drives ``outputs/flatten_seattle.html`` in a headless browser: the page
 must load without errors, route its default trip, answer searches for an
 intersection, an address and a park, and produce a route family whose ends
 are what the slider labels promise -- the left end is the true shortest
@@ -17,8 +17,8 @@ import os
 
 import pytest
 
-from sf_flat_routes.config import PROCESSED_DIR
-from sf_flat_routes.viz_interactive import SIMPLE_HTML, SITE_INDEX
+from flatten_seattle.config import PROCESSED_DIR
+from flatten_seattle.viz_interactive import SIMPLE_HTML, SITE_INDEX
 
 playwright = pytest.importorskip("playwright.sync_api",
                                  reason="playwright is not installed")
@@ -36,7 +36,7 @@ def _chromium() -> str | None:
 
 pytestmark = [
     pytest.mark.skipif(not SIMPLE_HTML.exists(),
-                       reason="route page not built; run `python -m sf_flat_routes map`"),
+                       reason="route page not built; run `python -m flatten_seattle map`"),
     pytest.mark.skipif(not (PROCESSED_DIR / "edges_directed.parquet").exists(),
                        reason="processed data not built"),
 ]
@@ -255,10 +255,10 @@ def test_the_frontier_contains_every_weighted_optimum(page_results):
     no more, under Python's own evaluation, than Python's route for that
     alpha between the same two nodes. This pins the browser's frontier
     search to the analysis's cost model."""
-    from sf_flat_routes.config import ROUTING_PROFILES, with_alpha
-    from sf_flat_routes.pipeline import build_context
-    from sf_flat_routes.routing import route
-    from sf_flat_routes.utils import configure_gdal_for_proxy
+    from flatten_seattle.config import ROUTING_PROFILES, with_alpha
+    from flatten_seattle.pipeline import build_context
+    from flatten_seattle.routing import route
+    from flatten_seattle.utils import configure_gdal_for_proxy
 
     out, _ = page_results
     configure_gdal_for_proxy()

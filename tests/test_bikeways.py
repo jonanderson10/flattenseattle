@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import LineString
 
-from sf_flat_routes import bikeways
+from flatten_seattle import bikeways
 
 
 def test_facility_codes_follow_sdot_categories():
