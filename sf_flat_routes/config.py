@@ -5,6 +5,7 @@ reproducible and the cost model is auditable.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -23,14 +24,19 @@ PROCESSED_DIR = Path(_RUN_DIR) / "processed" if _RUN_DIR else DATA_DIR / "proces
 OUTPUT_DIR = Path(_RUN_DIR) / "outputs" if _RUN_DIR else PROJECT_ROOT / "outputs"
 #: The route finder as a static site, deployed to GitHub Pages from here.
 SITE_DIR = Path(_RUN_DIR) / "site" if _RUN_DIR else PROJECT_ROOT / "site"
-#: The product is "flattensf"; the Python package keeps its older name.
-PRODUCT_NAME = "Flatten SF"
-REPO_URL = "https://github.com/almostimplemented/flattensf"
-#: The host the site answers on. Pages serves the custom domain on www and
-#: redirects the apex to it, so links, the canonical URL and the social
-#: preview image all use www; the CNAME file carries the same host.
-SITE_DOMAIN = "www.flattensf.com"
-SITE_URL = f"https://{SITE_DOMAIN}/"
+#: The product is "Flatten Seattle", a fork of flattensf; the Python package
+#: keeps the upstream name so upstream changes still merge.
+PRODUCT_NAME = "Flatten Seattle"
+CITY_NAME = "Seattle"
+#: Suffix on cached raw-data file names.
+CITY_SLUG = "seattle"
+REPO_URL = "https://github.com/jonanderson10/flattenseattle"
+UPSTREAM_URL = "https://github.com/almostimplemented/flattensf"
+#: Custom domain, once there is one: it is written to site/CNAME and used for
+#: the canonical URL. ``None`` serves from the default Pages URL, no CNAME.
+SITE_DOMAIN = None
+SITE_URL = (f"https://{SITE_DOMAIN}/" if SITE_DOMAIN
+            else "https://jonanderson10.github.io/flattenseattle/")
 
 for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -41,7 +47,7 @@ for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
 #: Geographic CRS of the source vector data (Overture) and of all map output.
 CRS_GEOGRAPHIC = "EPSG:4326"
 #: Projected CRS used for *every* length, slope and distance computation.
-#: NAD83 / UTM zone 10N -- the native CRS of the USGS 3DEP 1 m tiles for SF,
+#: NAD83 / UTM zone 10N -- the native CRS of the USGS 3DEP 1 m tiles for Seattle,
 #: so elevation sampling needs no reprojection of the raster.
 CRS_PROJECTED = "EPSG:26910"
 
@@ -49,14 +55,18 @@ CRS_PROJECTED = "EPSG:26910"
 # Study area
 # --------------------------------------------------------------------------
 #: Analysis bounding box (lon_min, lon_max, lat_min, lat_max).
-#: Covers the City & County of San Francisco land area plus a small margin.
-#: Deliberately excludes the Marin headlands and the Farallones.
-SF_BBOX = (-122.5200, -122.3300, 37.6950, 37.8350)
+#: The Seattle city limits (-122.436..-122.236, 47.4955..47.7342) plus ~500 m.
+#: The street network is then clipped to the land inside the city, so the
+#: I-90 and SR 520 floating bridges end at the shore: the route finder gets
+#: you to the bridge and no further.
+CITY_BBOX = (-122.4420, -122.2300, 47.4900, 47.7400)
+#: Latitude at the middle of the study area, for degree <-> metre shortcuts.
+CITY_LAT = (CITY_BBOX[2] + CITY_BBOX[3]) / 2
+#: metres per degree of longitude at CITY_LAT
+LON_M_PER_DEG = 111320.0 * math.cos(math.radians(CITY_LAT))
 
-#: Treasure Island / Yerba Buena Island are part of SF but are only reachable
-#: via the Bay Bridge (no pedestrian access to the western span) so they are
-#: excluded from neighborhood-pair routing.
-EXCLUDED_NEIGHBORHOODS = ("Treasure Island/YBI",)
+#: Neighborhoods left out of pair routing (none for Seattle).
+EXCLUDED_NEIGHBORHOODS: tuple = ()
 
 # --------------------------------------------------------------------------
 # Elevation sampling / smoothing
@@ -99,6 +109,14 @@ class ElevationConfig:
     #: sampling. 3 m is far narrower than a street and far narrower than the
     #: block scale on which real gradient varies; 0 disables it.
     dem_sigma_m: float = 3.0
+    #: DEM cells below this elevation (m, NAVD88) are water, treated as
+    #: nodata. The King County 2021 lidar hydro-flattens Puget Sound, the
+    #: Duwamish and the salt-water lock chamber at Ballard to about -0.4 to
+    #: -0.9 m instead of leaving them empty, so walkways over water (the
+    #: locks, piers, the Spokane St crossing) sampled the water surface and
+    #: showed metres of phantom climbing. No routable ground in Seattle sits
+    #: this low; ``None`` disables it.
+    water_below_m: float | None = 1.0
 
 
 def _overrides() -> dict:

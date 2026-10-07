@@ -53,7 +53,8 @@ def load_neighborhoods(path: Path = NEIGHBORHOODS_GEOJSON, force: bool = False):
         return gpd.read_file(NEIGHBORHOODS_GPKG)
 
     gdf = gpd.read_file(path)
-    gdf = gdf.rename(columns={"name": "neighborhood"})
+    # Seattle's Neighborhood Map Atlas names the polygon S_HOOD
+    gdf = gdf.rename(columns={"S_HOOD": "neighborhood", "name": "neighborhood"})
     gdf = gdf[["neighborhood", "geometry"]].copy()
     gdf = gdf.to_crs(CRS_PROJECTED)
     gdf["geometry"] = gdf.geometry.buffer(0)          # repair any self-touching rings

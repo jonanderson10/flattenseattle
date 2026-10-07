@@ -32,7 +32,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .config import PROCESSED_DIR, SF_BBOX
+from .config import CITY_BBOX, CITY_LAT, LON_M_PER_DEG, PROCESSED_DIR
 from .download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
 from .utils import get_logger, step
 
@@ -144,23 +144,24 @@ def _support(names: pd.Series, lon: np.ndarray, lat: np.ndarray,
             for dy in (-1, 0, 1):
                 for j in grid.get((cx + dx, cy + dy), ()):
                     o = low[j]
-                    if o != n and n in o and abs(all_lon[j] - x) * 88000 < radius_m \
+                    if o != n and n in o and abs(all_lon[j] - x) * LON_M_PER_DEG < radius_m \
                             and abs(all_lat[j] - y) * 111000 < radius_m:
                         out[k] += 1
     return out
 
 
-_CITY_SUFFIXES = {"sf", "san francisco", "san francisco ca", "sf ca", "ca",
-                  "san francisco california", "california", "usa"}
-# 'X San Francisco' and 'X SF' are city suffixes even without a comma;
-# a bare trailing 'California' or 'CA' only after one ('Cafe California').
+_CITY_SUFFIXES = {"seattle", "seattle wa", "seattle washington", "wa",
+                  "washington", "usa"}
+# 'X Seattle' is a city suffix even without a comma; a bare trailing
+# 'Washington' or 'WA' only after one ('Washington' alone is a street, a
+# state and a university here).
 _CORE_RE = re.compile(
-    r"(?:[\s,\-/]+(?:san francisco|sf)(?:[\s,]+(?:ca|california|usa))?"
-    r"|[,\-/]\s*(?:ca|california|usa))\s*$", re.I)
+    r"(?:[\s,\-/]+seattle(?:[\s,]+(?:wa|washington|usa))?"
+    r"|[,\-/]\s*(?:wa|washington|usa))\s*$", re.I)
 
 
 def _core(name: str) -> str:
-    """'Dolores Park, San Francisco' -> 'dolores park'."""
+    """'Cal Anderson Park, Seattle' -> 'cal anderson park'."""
     return _CORE_RE.sub("", str(name)).strip().lower()
 
 
@@ -188,14 +189,14 @@ def _prune_variants(df: pd.DataFrame, radius_m: float = 500.0) -> pd.DataFrame:
             # (a branch, a sub-area) only when it is close by
             rest = n[len(k):].strip(" ,-/()").lower()
             if rest in _CITY_SUFFIXES:
-                r = 6000.0                       # 'X, San Francisco' anywhere
+                r = 6000.0                       # 'X, Seattle' anywhere
             elif groups[i] != groups[j]:
                 continue                         # 'Dolores Park Cafe' is a cafe
             elif support[j] >= 3 and support[i] == 0:
                 r = 6000.0                       # a same-kind variant of a well-known name
             else:
                 r = radius_m
-            if (abs(lon[i] - lon[j]) * 88000 < r
+            if (abs(lon[i] - lon[j]) * LON_M_PER_DEG < r
                     and abs(lat[i] - lat[j]) * 111000 < r):
                 dup = True
                 break
@@ -261,8 +262,8 @@ def build_places() -> dict:
     keep |= names.notna() & (support >= 5) & (conf >= 0.6)
     df = pd.DataFrame({"name": names, "group": group.fillna("landmark"),
                        "conf": conf, "lon": lon, "lat": lat, "support": support})[keep]
-    df = df[(df["lon"].between(SF_BBOX[0], SF_BBOX[1]))
-            & (df["lat"].between(SF_BBOX[2], SF_BBOX[3]))]
+    df = df[(df["lon"].between(CITY_BBOX[0], CITY_BBOX[1]))
+            & (df["lat"].between(CITY_BBOX[2], CITY_BBOX[3]))]
     df = (df.sort_values(["support", "conf"], ascending=False)
             .drop_duplicates(["name", "group"])
             .reset_index(drop=True))
@@ -285,8 +286,8 @@ def build_places() -> dict:
     df = _prune_variants(df[~dup].reset_index(drop=True))
     df = pd.concat([base[["name", "group", "lon", "lat"]], df[["name", "group", "lon", "lat"]]],
                    ignore_index=True)
-    df = df[(df["lon"].between(SF_BBOX[0], SF_BBOX[1]))
-            & (df["lat"].between(SF_BBOX[2], SF_BBOX[3]))]
+    df = df[(df["lon"].between(CITY_BBOX[0], CITY_BBOX[1]))
+            & (df["lat"].between(CITY_BBOX[2], CITY_BBOX[3]))]
     df = df.sort_values(["name"]).reset_index(drop=True)
     log.info("places: %d kept of %d POI records plus %d mapped features (%s)",
              len(df) - len(base), len(t), len(base),
@@ -318,7 +319,7 @@ def build_addresses() -> dict:
     streets = sorted(t["street_t"].unique())
     sidx = {s: i for i, s in enumerate(streets)}
     log.info("addresses: %d unique street numbers on %d streets", len(t), len(streets))
-    lon0, lat0 = SF_BBOX[0], SF_BBOX[2]
+    lon0, lat0 = CITY_BBOX[0], CITY_BBOX[2]
     return {
         "streets": streets,
         "street": t["street_t"].map(sidx).to_numpy().astype("<u2"),
@@ -355,7 +356,7 @@ def build_hillshade(width_px: int = 1600) -> dict:
         dem = np.where(np.isfinite(dem) & (dem != nod) & (dem > -50), dem, np.nan)
         valid = np.isfinite(dem)
         filled = np.where(valid, dem, np.nanmedian(dem))
-        px_m = abs(transform.a) * 111320 * np.cos(np.radians(37.76))
+        px_m = abs(transform.a) * 111320 * np.cos(np.radians(CITY_LAT))
         hs = hillshade(filled, res=px_m, z_factor=1.8)
         shade = (0.72 + 0.28 * hs)[..., None]
         tint = np.clip(filled / 260, 0, 1)[..., None]

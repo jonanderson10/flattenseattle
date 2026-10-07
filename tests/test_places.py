@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from sf_flat_routes import places
-from sf_flat_routes.config import SF_BBOX
+from sf_flat_routes.config import CITY_BBOX
 from sf_flat_routes.download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
 
 
@@ -18,12 +18,14 @@ def test_street_names_are_title_cased_with_suffixes_kept_short():
 
 
 def test_core_strips_a_trailing_city_name():
-    assert places._core("Dolores Park, San Francisco") == "dolores park"
-    assert places._core("Coit Tower, SF") == "coit tower"
-    assert places._core("Ocean Beach - San Francisco") == "ocean beach"
-    assert places._core("Marina Green") == "marina green"
-    # a suffix that is part of the name is not a city suffix
-    assert places._core("Cafe California") == "cafe california"
+    assert places._core("Cal Anderson Park, Seattle") == "cal anderson park"
+    assert places._core("Space Needle, Seattle WA") == "space needle"
+    assert places._core("Gas Works Park - Seattle") == "gas works park"
+    assert places._core("Green Lake") == "green lake"
+    # a suffix that is part of the name is not a city suffix: 'Washington'
+    # is a street, a state and a university here
+    assert places._core("Cafe Washington") == "cafe washington"
+    assert places._core("Washington Park Arboretum") == "washington park arboretum"
 
 
 def test_support_counts_nearby_records_that_mention_the_name():
@@ -38,7 +40,7 @@ def test_support_counts_nearby_records_that_mention_the_name():
 
 def test_variant_pruning_keeps_different_kinds_and_distant_namesakes():
     df = pd.DataFrame({
-        "name": ["Dolores Park", "Dolores Park, San Francisco", "Dolores Park Cafe",
+        "name": ["Dolores Park", "Dolores Park, Seattle", "Dolores Park Cafe",
                  "Golden Gate Park", "Golden Gate Park - East", "Golden Gate Park Carousel"],
         "group": ["park", "park", "food", "park", "park", "landmark"],
         "lon": [-122.427, -122.421, -122.4259, -122.482, -122.458, -122.458],
@@ -49,7 +51,7 @@ def test_variant_pruning_keeps_different_kinds_and_distant_namesakes():
     out = places._prune_variants(df)
     kept = set(out["name"])
     assert "Dolores Park" in kept
-    assert "Dolores Park, San Francisco" not in kept      # city suffix, any distance
+    assert "Dolores Park, Seattle" not in kept            # city suffix, any distance
     assert "Dolores Park Cafe" in kept                    # a different kind of place
     assert "Golden Gate Park" in kept
     assert "Golden Gate Park Carousel" in kept            # different kind
@@ -76,29 +78,28 @@ def test_place_index_is_compact_and_inside_the_city(index):
     assert 5000 < n < 20000
     assert len(index["group"]) == n == len(index["lon"]) == len(index["lat"])
     assert max(index["group"]) < len(index["groups"])
-    assert min(index["lon"]) >= SF_BBOX[0] and max(index["lon"]) <= SF_BBOX[1]
-    assert min(index["lat"]) >= SF_BBOX[2] and max(index["lat"]) <= SF_BBOX[3]
+    assert min(index["lon"]) >= CITY_BBOX[0] and max(index["lon"]) <= CITY_BBOX[1]
+    assert min(index["lat"]) >= CITY_BBOX[2] and max(index["lat"]) <= CITY_BBOX[3]
     assert len(set(index["names"])) == n or len(set(zip(index["names"], index["group"]))) == n
 
 
 @needs_places
 @needs_base
-def test_mapped_features_win_over_the_poi_feed(index):
-    """The POI feed drops 'Dolores Park' in the Tenderloin and in Bayview;
-    the mapped park is the only record that remains under that name."""
-    hits = {(n, index["groups"][g]): (lo, la) for n, g, lo, la in
-            zip(index["names"], index["group"], index["lon"], index["lat"])}
-    assert ("Mission Dolores Park", "park") in hits
-    lo, la = hits[("Mission Dolores Park", "park")]
-    assert abs(lo + 122.427) < 0.003 and abs(la - 37.7596) < 0.003
-    assert ("Dolores Park", "park") not in hits
-    # famous things sit where they belong
-    for name, kind, lon, lat in [("Coit Tower", "viewpoint", -122.4058, 37.8024),
-                                 ("Pier 39", "pier", -122.4103, 37.8095),
-                                 ("Golden Gate Park", "park", -122.482, 37.769),
-                                 ("Ocean Beach", "beach", -122.510, 37.757)]:
+def test_famous_places_are_found_where_they_belong(index):
+    """Landmarks and parks resolve to their real location, mapped parks are
+    filed as parks, and a park name is not duplicated by stray POI copies."""
+    hits: dict = {}
+    for n, g, lo, la in zip(index["names"], index["group"], index["lon"], index["lat"]):
+        hits.setdefault((n, index["groups"][g]), []).append((lo, la))
+    for name, kind, lon, lat in [("Space Needle", "landmark", -122.3493, 47.6205),
+                                 ("Gas Works Park", "park", -122.3344, 47.6456),
+                                 ("Green Lake Park", "park", -122.3300, 47.6780),
+                                 ("Alki Beach", "beach", -122.4050, 47.5810),
+                                 ("Discovery Park", "park", -122.4200, 47.6610),
+                                 ("Fremont Troll", "landmark", -122.3473, 47.6510)]:
         assert (name, kind) in hits, name
-        lo, la = hits[(name, kind)]
+        assert len(hits[(name, kind)]) == 1, name
+        lo, la = hits[(name, kind)][0]
         assert abs(lo - lon) < 0.004 and abs(la - lat) < 0.004, name
 
 
@@ -114,6 +115,6 @@ def test_addresses_pack_into_sorted_uint16_offsets():
     assert np.all(np.diff(key) > 0)
     lon = a["origin"][0] + a["lon"] * 1e-5
     lat = a["origin"][1] + a["lat"] * 1e-5
-    assert lon.min() >= SF_BBOX[0] and lon.max() <= SF_BBOX[1] + 1e-4
-    assert lat.min() >= SF_BBOX[2] and lat.max() <= SF_BBOX[3] + 1e-4
-    assert "Valencia St" in a["streets"]
+    assert lon.min() >= CITY_BBOX[0] and lon.max() <= CITY_BBOX[1] + 1e-4
+    assert lat.min() >= CITY_BBOX[2] and lat.max() <= CITY_BBOX[3] + 1e-4
+    assert "East Pike Street" in a["streets"]

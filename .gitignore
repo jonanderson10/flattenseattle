@@ -3,6 +3,7 @@
 #   python -m sf_flat_routes build-network
 data/raw/
 data/processed/
+data/sf_baseline/
 
 # Regenerable and bulky; rebuild with `python -m sf_flat_routes analyze`
 outputs/lowland_basins.geojson

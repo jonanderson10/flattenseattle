@@ -10,15 +10,18 @@ from shapely.geometry import LineString
 from sf_flat_routes import bikeways
 
 
-def test_facility_codes_follow_sfmta_class_and_symbology():
+def test_facility_codes_follow_sdot_categories():
     f = bikeways._facility
-    assert f({"facility_t": "CLASS I", "symbology": "BIKE PATH"}) == "path"
-    assert f({"facility_t": "CLASS IV", "symbology": "SEPARATED BIKEWAY"}) == "separated"
-    assert f({"facility_t": "CLASS II", "symbology": "BIKE LANE", "buffered": "NO"}) == "lane"
-    assert f({"facility_t": "CLASS II", "symbology": "BIKE LANE", "buffered": "YES"}) == "buffered_lane"
-    assert f({"facility_t": "CLASS III", "symbology": "BIKE ROUTE"}) == "route"
-    assert f({"facility_t": "CLASS III", "symbology": "NEIGHBORWAY"}) == "neighborway"
-    assert f({"facility_t": None, "symbology": None}) == ""
+    assert f({"category": "TRAIL"}) == "path"
+    assert f({"category": "BKF-OFFST"}) == "path"
+    assert f({"category": "BKF-PBL"}) == "separated"
+    assert f({"category": "BKF-BBL"}) == "buffered_lane"
+    assert f({"category": "BKF-BL"}) == "lane"
+    assert f({"category": "BKF-CLMB"}) == "lane"
+    assert f({"category": "BKF-NGW"}) == "neighborway"
+    assert f({"category": "BKF-SHW"}) == "route"
+    assert f({"category": None}) == ""
+    assert f({}) == ""
 
 
 def test_stress_prefers_protected_lanes_and_penalises_bare_arterials():
@@ -77,7 +80,8 @@ needs_data = pytest.mark.skipif(not bikeways.BIKEWAYS_GEOJSON.exists(),
 def test_the_real_network_has_every_facility_class():
     bw = bikeways.load_bikeways()
     counts = bw["facility"].value_counts()
-    assert counts["route"] > 2000 and counts["lane"] > 1500
-    assert counts["separated"] > 500 and counts["path"] > 300
+    assert counts["route"] > 800 and counts["lane"] > 700
+    assert counts["neighborway"] > 600
+    assert counts["separated"] > 500 and counts["path"] > 200
     assert bw.crs.to_epsg() == 4326
-    assert np.all(np.isfinite(bw.geometry.length))
+    assert np.all(np.isfinite(bw.to_crs(26910).geometry.length))

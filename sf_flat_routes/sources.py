@@ -22,29 +22,34 @@ OVERTURE_PLACES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=places"
 OVERTURE_ADDRESSES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=addresses"
 OVERTURE_BASE_PREFIX = f"release/{OVERTURE_RELEASE}/theme=base"
 
-#: USGS 3DEP 1 m lidar project covering San Francisco.
+#: USGS 3DEP 1 m lidar project covering Seattle (King County, flown 2021).
 TNM_BUCKET = "https://prd-tnm.s3.amazonaws.com"
-LIDAR_PROJECT = "CA_SanFrancisco_B23"
+LIDAR_PROJECT = "WA_KingCounty_2021_B21"
 LIDAR_PREFIX = f"StagedProducts/Elevation/1m/Projects/{LIDAR_PROJECT}/TIFF"
-LIDAR_TILES = (
-    "USGS_1M_10_x54y418_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x54y419_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x55y418_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+#: The eight 10 km tiles that the TNM products API returns for CITY_BBOX.
+LIDAR_TILES = tuple(
+    f"USGS_1M_10_x{x}y{y}_{LIDAR_PROJECT}.tif"
+    for x in (54, 55) for y in (526, 527, 528, 529)
 )
 
 #: USGS 1/3 arc-second seamless DEM tile, used only to cross-validate the
 #: lidar product (it is ~10 m and far too coarse for street grades).
 SEAMLESS_DEM_URL = (
-    f"{TNM_BUCKET}/StagedProducts/Elevation/13/TIFF/current/n38w123/"
-    "USGS_13_n38w123.tif"
+    f"{TNM_BUCKET}/StagedProducts/Elevation/13/TIFF/current/n48w123/"
+    "USGS_13_n48w123.tif"
 )
 
-#: San Francisco neighborhood polygons.
+#: City of Seattle GIS (ArcGIS Online) feature services.
+SEATTLE_GIS = "https://services.arcgis.com/ZOyb2t4B0UYuYNYH/arcgis/rest/services"
+#: Neighborhood Map Atlas neighborhoods: 94 polygons that follow the
+#: shoreline, so their union is the city's land area.
 NEIGHBORHOOD_URL = (
-    "https://raw.githubusercontent.com/codeforamerica/click_that_hood/"
-    "master/public/data/san-francisco.geojson"
+    f"{SEATTLE_GIS}/nma_nhoods_sub/FeatureServer/0/query"
+    "?where=1%3D1&outFields=S_HOOD,L_HOOD&outSR=4326&f=geojson"
 )
+#: SDOT bike facilities: layer 1 is multi-use trails, layer 2 on-street
+#: facilities (protected and painted lanes, greenways, sharrows).
+BIKE_FACILITIES_LAYER = f"{SEATTLE_GIS}/SDOT_Bike_Facilities/FeatureServer"
 
 
 @dataclass(frozen=True)
@@ -76,20 +81,19 @@ DATASETS: tuple[Dataset, ...] = (
         licence="ODbL 1.0 (OpenStreetMap contributors); Overture schema CDLA-Permissive 2.0",
         role="Routable street network: geometry, road class, per-mode access "
              "restrictions, bridge/tunnel flags and connector topology.",
-        local="data/raw/overture_segments_sf.parquet",
+        local="data/raw/overture_segments_seattle.parquet",
         limitations=(
             "OSM-derived, so completeness and tagging quality vary by area. "
-            "Road classification of SF arterials is inconsistent in places "
-            "(Van Ness Ave, 19th Ave, Lombard St and part of Mission St are "
-            "tagged 'trunk' although they are ordinary surface streets, so "
-            "'trunk' cannot be excluded from walking/biking). A few freeway "
-            "ramp segments carry the surface street's name (Octavia Blvd, "
-            "Junipero Serra Blvd). Sidewalk and crosswalk geometry is present "
-            "but of uneven completeness and is deliberately not used."
+            "Road classification of arterials is inconsistent in places "
+            "(state routes such as Aurora Ave N are tagged 'trunk' along "
+            "stretches that are ordinary surface streets with sidewalks, so "
+            "'trunk' cannot be excluded from walking/biking). Sidewalk and "
+            "crosswalk geometry is present but of uneven completeness and is "
+            "deliberately not used."
         ),
-        notes="Read with Parquet row-group bbox pruning: only 7 of 16,384 "
-              "global row groups intersect San Francisco, so the whole "
-              "extract costs a few seconds and ~10 MB instead of 64 GB.",
+        notes="Read with Parquet row-group bbox pruning: only a handful of "
+              "the global row groups intersect Seattle, so the whole "
+              "extract costs seconds and megabytes instead of 64 GB.",
     ),
     Dataset(
         key="overture_connectors",
@@ -101,7 +105,7 @@ DATASETS: tuple[Dataset, ...] = (
         licence="ODbL 1.0; Overture schema CDLA-Permissive 2.0",
         role="Authoritative intersection nodes. Using connector IDs for graph "
              "topology avoids geometric snapping tolerances entirely.",
-        local="data/raw/overture_connectors_sf.parquet",
+        local="data/raw/overture_connectors_seattle.parquet",
         limitations="Connectors exist only where OSM ways share a node; "
                     "grade-separated crossings correctly do not connect.",
     ),
@@ -123,14 +127,14 @@ DATASETS: tuple[Dataset, ...] = (
             "interpolating elevation across segments flagged is_bridge or "
             "is_tunnel. Residual noise of a few decimetres from vehicles, "
             "curbs and vegetation misclassification is handled by "
-            "Savitzky-Golay smoothing plus a gain dead-band. Four 10 km tiles "
-            "(~523 MB total) are cloud-optimised GeoTIFFs, so windowed reads "
+            "Savitzky-Golay smoothing plus a gain dead-band. Eight 10 km tiles "
+            "(~1.9 GB total) are cloud-optimised GeoTIFFs, so windowed reads "
             "are cheap."
         ),
     ),
     Dataset(
         key="dem_13",
-        title="USGS 3DEP 1/3 arc-second seamless DEM, tile n38w123",
+        title="USGS 3DEP 1/3 arc-second seamless DEM, tile n48w123",
         publisher="U.S. Geological Survey, 3D Elevation Program",
         url=SEAMLESS_DEM_URL,
         accessed=ACCESS_DATE,
@@ -138,39 +142,27 @@ DATASETS: tuple[Dataset, ...] = (
         licence="Public domain (U.S. Government work)",
         role="Independent cross-check on the 1 m lidar elevations (validation "
              "only -- too coarse for street grades).",
-        local="data/raw/dem_13_n38w123.tif",
+        local="data/raw/dem_13_n48w123.tif",
         limitations="~10 m posting smooths away street-scale relief and "
                     "systematically under-reports maximum grades.",
         optional=True,
     ),
     Dataset(
         key="neighborhoods",
-        title="San Francisco neighborhoods (37-neighborhood planning set)",
-        publisher="San Francisco Planning Department / DataSF, "
-                  "mirrored by Code for America (click_that_hood)",
+        title="Seattle Neighborhood Map Atlas neighborhoods",
+        publisher="City of Seattle (Department of Neighborhoods), Seattle GeoData",
         url=NEIGHBORHOOD_URL,
         accessed=ACCESS_DATE,
-        resolution="Vector polygons, 37 features",
-        licence="Public domain / open data (City & County of San Francisco)",
-        role="Neighborhood boundaries for origin/destination selection and "
-             "corridor attribution.",
-        local="data/raw/sf_neighborhoods.geojson",
+        resolution="Vector polygons, 94 neighborhoods in 20 districts",
+        licence="Open data (City of Seattle)",
+        role="City boundary (the union of the polygons, which follow the "
+             "shoreline) for clipping the street network, and neighborhood "
+             "labels on the route page.",
+        local="data/raw/seattle_neighborhoods.geojson",
         limitations=(
-            "This is the long-standing 37-unit San Francisco planning "
-            "neighborhood set, not the newer 41-unit 'Analysis Neighborhoods' "
-            "product. It is used because data.sfgov.org is unreachable from "
-            "the build environment (blocked by egress policy), so the DataSF "
-            "API could not be called; this Code for America mirror is the "
-            "closest reachable equivalent. Boundary vintage is not stated by "
-            "the mirror. The two products differ mainly in how the Sunset, "
-            "Richmond and Twin Peaks areas are subdivided, which affects "
-            "representative-point placement but not the street model."
-        ),
-        substituted=True,
-        substitution_reason=(
-            "DataSF (data.sfgov.org) and sfgov.org are blocked by the "
-            "environment's network policy; the official 41-neighborhood "
-            "Analysis Neighborhoods GeoJSON could not be downloaded."
+            "Neighborhood names are informal and some overlap in common use. "
+            "The polygons exclude open water, so bridges leaving the city "
+            "(I-90, SR 520) are clipped about 250 m past the shore."
         ),
     ),
     Dataset(
@@ -183,7 +175,7 @@ DATASETS: tuple[Dataset, ...] = (
         licence="CDLA Permissive 2.0",
         role="Offline place search in the route page (parks, landmarks, "
              "transit, schools, shops, cafes).",
-        local="data/raw/overture_places_sf.parquet",
+        local="data/raw/overture_places_seattle.parquet",
         limitations="Point-of-interest coverage and naming are uneven; only "
                     "records with confidence >= 0.6 in routable categories "
                     "are kept. Not used by the analysis itself.",
@@ -201,7 +193,7 @@ DATASETS: tuple[Dataset, ...] = (
              "bridges, viewpoints, peaks and beaches for the route page's "
              "offline search; these outrank the POI feed, which places the "
              "same names unreliably.",
-        local="data/raw/overture_{land_use,infrastructure,land}_sf.parquet",
+        local="data/raw/overture_{land_use,infrastructure,land}_seattle.parquet",
         limitations="Only named features in a fixed class list are used. "
                     "Not used by the analysis itself.",
         optional=True,
@@ -209,38 +201,34 @@ DATASETS: tuple[Dataset, ...] = (
     Dataset(
         key="overture_addresses",
         title=f"Overture Maps addresses (release {OVERTURE_RELEASE})",
-        publisher="Overture Maps Foundation (OpenAddresses / City of San Francisco)",
+        publisher="Overture Maps Foundation (OpenAddresses / King County)",
         url=f"{OVERTURE_BUCKET}/{OVERTURE_ADDRESSES_PREFIX}/type=address/",
         accessed="2026-10-04",
         resolution="Address points with street number and street name",
-        licence="Open (OpenAddresses sources; SF data is public domain)",
+        licence="Open (OpenAddresses sources)",
         role="Offline street-address search in the route page.",
-        local="data/raw/overture_addresses_sf.parquet",
+        local="data/raw/overture_addresses_seattle.parquet",
         limitations="One point per (street, number) is kept; unit numbers "
                     "are dropped. Not used by the analysis itself.",
         optional=True,
     ),
     Dataset(
         key="bike_network",
-        title="SFMTA Bike Network (linear features)",
-        publisher="SFMTA via DataSF",
-        url="https://data.sfgov.org/Transportation/MTA-Bike-Network-Linear-Features/",
-        accessed="2026-10-05 (downloaded by hand; data.sfgov.org is blocked "
-                 "from the build environment)",
-        resolution="5,457 centreline segments with SFMTA facility class "
-                   "(I path, II lane, III route, IV separated), buffering and "
-                   "barrier type; data_as_of 2023-10 to 2026-04",
-        licence="Open data (City & County of San Francisco)",
+        title="SDOT Bike Facilities (existing facilities and multi-use trails)",
+        publisher="Seattle Department of Transportation, Seattle GeoData",
+        url=f"{BIKE_FACILITIES_LAYER}/",
+        accessed=ACCESS_DATE,
+        resolution="~3,600 on-street facility segments (CATEGORY: protected, "
+                   "buffered and painted lanes, climbing lanes, neighborhood "
+                   "greenways, sharrows, off-street) and ~200 trail segments",
+        licence="Open data (City of Seattle)",
         role="Bike-mode comfort weighting on the route page ('prefer calm "
              "streets'); see bikeways.py.",
-        local="data/raw/sfmta_bike_network.geojson",
+        local="data/raw/sdot_bike_facilities.geojson",
         limitations=(
-            "Keyed by CNN, which Overture does not carry, so segments are "
-            "matched to graph edges geometrically (within 12 m and 25 degrees, "
-            "over at least half the edge). Roughly 580 of 760 km match; the "
-            "rest is Presidio and park paths outside the routable graph or "
-            "double-counted one-way pairs. Slow Streets are not in this "
-            "dataset; they are handled through Overture access rules."
+            "Matched to graph edges geometrically (within 12 m and 25 degrees, "
+            "over at least half the edge), since Overture carries no SDOT "
+            "segment keys. Facilities under construction are left out."
         ),
         optional=True,
     ),

@@ -45,7 +45,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import CRS_PROJECTED, ELEVATION, PROCESSED_DIR, SF_BBOX
+from .config import CITY_BBOX, CRS_PROJECTED, ELEVATION, PROCESSED_DIR
 from .download import DEM_DIR
 from .utils import get_logger, progress, step
 
@@ -57,6 +57,7 @@ PROFILES_NPZ = PROCESSED_DIR / "edge_profiles.npz"
 #: Standard deviation (m) of the Gaussian pre-filter applied to the DEM
 #: (configured in ``config.ElevationConfig.dem_sigma_m``).
 DEM_SMOOTH_SIGMA_M = ELEVATION.dem_sigma_m
+WATER_BELOW_M = ELEVATION.water_below_m
 
 
 # --------------------------------------------------------------------------
@@ -77,7 +78,7 @@ def build_dem_mosaic(force: bool = False) -> Path:
         raise FileNotFoundError(
             f"no DEM tiles in {DEM_DIR}; run `python -m sf_flat_routes download`")
 
-    lon_min, lon_max, lat_min, lat_max = SF_BBOX
+    lon_min, lon_max, lat_min, lat_max = CITY_BBOX
     bounds = transform_bounds("EPSG:4326", CRS_PROJECTED,
                               lon_min, lat_min, lon_max, lat_max)
     # pad so that edge densification never samples outside the mosaic
@@ -111,7 +112,7 @@ class DemSampler:
     """In-memory, pre-smoothed DEM with bilinear point sampling."""
 
     def __init__(self, path: Path = DEM_MOSAIC, sigma_m: float = DEM_SMOOTH_SIGMA_M,
-                 smooth: bool = True):
+                 smooth: bool = True, water_below_m: float | None = WATER_BELOW_M):
         import rasterio
         from scipy.ndimage import gaussian_filter
 
@@ -125,6 +126,10 @@ class DemSampler:
         self.valid = np.isfinite(data)
         if self.nodata is not None:
             self.valid &= data != self.nodata
+        # Hydro-flattened water: real values, so they stay in the data for
+        # smoothing (the shoreline keeps its true height), but samples that
+        # land on them are invalid and get solved from their neighbours.
+        water = (self.valid & (data < water_below_m)) if water_below_m is not None else None
         # Fill nodata with the mean so the Gaussian does not smear -999999
         # across the coastline; invalid cells are masked again after sampling.
         fill = float(data[self.valid].mean()) if self.valid.any() else 0.0
@@ -135,6 +140,10 @@ class DemSampler:
             with step(f"pre-smoothing DEM (Gaussian sigma={sigma_m:g} m)", log):
                 data = gaussian_filter(data, sigma=sigma_px, mode="nearest")
         self.data = data
+        if water is not None:
+            self.valid &= ~water
+            log.info("DEM: %.1f%% of cells are water below %g m, treated as nodata",
+                     100.0 * water.mean(), water_below_m)
         self.sigma_m = sigma_m if smooth else 0.0
         log.info("DEM sampler ready: %s cells, %.1f%% valid",
                  f"{data.size:,}", 100.0 * self.valid.mean())
@@ -245,10 +254,34 @@ def _solve_structure_nodes(edges, node_elev: dict, reliable: set,
                 est[n] = new
         if delta < 1e-4:
             break
+
+    # A connected piece of the sub-graph that touches no reliable node has
+    # nothing to anchor it: the iteration above just leaves it at the seed
+    # (the mean of every reliable node, tens of metres off). Leave those
+    # unknown instead, so the whole-graph DEM-void pass solves them from
+    # their real neighbours. This happens to footbridges whose only landing
+    # sits over (hydro-flattened) water.
+    anchored: set[str] = set()
+    for start in adj:
+        if start in anchored or start in reliable:
+            continue
+        comp, stack = {start}, [start]
+        while stack:
+            for m, _ in adj[stack.pop()]:
+                if m not in comp:
+                    comp.add(m); stack.append(m)
+        if any(m in reliable and np.isfinite(node_elev.get(m, np.nan)) for m in comp):
+            anchored |= comp
     out = dict(node_elev)
+    floating = 0
     for n in unknown:
-        out[n] = est[n]
-    log.info("  recovered elevations for %d %s nodes", len(unknown), label)
+        if n in anchored:
+            out[n] = est[n]
+        else:
+            out[n] = np.nan
+            floating += 1
+    log.info("  recovered elevations for %d %s nodes%s", len(unknown) - floating, label,
+             f"; {floating} with no reliable neighbour left for later" if floating else "")
     return out
 
 
@@ -472,12 +505,15 @@ def sample_edge_profiles(edges, sampler: DemSampler | None = None,
             out_elev[i] = (z.astype("float64")
                            + delta0 * (1.0 - frac) + delta1 * frac
                            ).astype("float32")
-            shifts.append(max(abs(delta0), abs(delta1)))
+            shifts.append((max(abs(delta0), abs(delta1)), int(edge_ids[i])))
         if shifts:
-            sh = np.asarray(shifts)
+            sh = np.asarray([s for s, _ in shifts])
             log.info("  node reconciliation shifted profile ends by "
                      "%.3f m on average, %.2f m at worst (%d edges)",
                      sh.mean(), sh.max(), sh.size)
+            worst = sorted(shifts, reverse=True)[:5]
+            log.debug("  largest shifts (m, edge_id): %s",
+                      ", ".join(f"{s:.2f} @ {e}" for s, e in worst))
 
     cat_d = np.concatenate(out_dist); cat_e = np.concatenate(out_elev)
     np.savez_compressed(PROFILES_NPZ, edge_ids=edge_ids, offsets=offsets,

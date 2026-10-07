@@ -89,18 +89,21 @@ def test_known_flat_and_steep_streets_are_correctly_separated(edges):
         km = sub["length_m"].sum() / 1000
         return sub["cum_gain_fwd"].sum() / km if km else np.nan
 
-    flat = gain_per_km("The Embarcadero")
-    steep = gain_per_km("Jones Street")
-    assert flat < 3.0, f"the Embarcadero should be level, got {flat:.1f} m/km"
-    assert steep > 20.0, f"Jones Street should be steep, got {steep:.1f} m/km"
+    flat = gain_per_km("Alki Avenue Southwest")
+    steep = gain_per_km("East Roy Street")
+    assert flat < 3.0, f"Alki Avenue should be level, got {flat:.1f} m/km"
+    assert steep > 20.0, f"East Roy Street should be steep, got {steep:.1f} m/km"
     assert steep > 8 * flat
 
 
-def test_filbert_street_matches_its_documented_gradient(edges):
-    sub = edges[(edges["name"] == "Filbert Street")
-                & (edges["cls"] == "residential")
+def test_queen_anne_counterbalance_is_steep_but_plausible(edges):
+    """Queen Anne Avenue North up the Counterbalance is Seattle's best-known
+    steep arterial. Not checked against a documented figure yet: this only
+    guards against the hill vanishing (a flattened DEM) or turning into a
+    cliff (a bad structure or water sample)."""
+    sub = edges[(edges["name"] == "Queen Anne Avenue North")
                 & (edges["length_m"] >= MIN_RELIABLE_GRADE_LENGTH_M)]
-    assert abs(sub["max_abs_grade"].max() - 0.315) < 0.05
+    assert 0.15 < sub["max_abs_grade"].max() < 0.30
 
 
 @pytest.mark.skipif(not PAIRS.exists(), reason="pair analysis not run")

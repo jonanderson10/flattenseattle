@@ -275,7 +275,7 @@ def build_edges(segments_path: Path, force: bool = False,
 
     if clip_to_city:
         from .neighborhoods import city_boundary
-        with step("clipping network to the San Francisco city boundary", log):
+        with step("clipping network to the city boundary", log):
             boundary = city_boundary(buffer_m=250.0)
             mid = gdf.geometry.interpolate(0.5, normalized=True)
             keep = gpd.GeoSeries(mid, crs=gdf.crs).within(boundary)

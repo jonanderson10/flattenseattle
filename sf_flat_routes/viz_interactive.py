@@ -25,7 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import OUTPUT_DIR, PRODUCT_NAME, REPO_URL, SITE_DIR, SITE_DOMAIN, SITE_URL
+from .config import (CITY_NAME, OUTPUT_DIR, PRODUCT_NAME, REPO_URL, SITE_DIR,
+                     SITE_DOMAIN, SITE_URL)
 from .utils import get_logger, human_bytes, step
 
 log = get_logger("sf_flat_routes.viz_interactive")
@@ -215,23 +216,19 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
             '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
             '<meta property="og:type" content="website">',
             f'<meta property="og:title" content="{PRODUCT_NAME}">',
-            '<meta property="og:site_name" content="Flatten SF">',
-            '<meta property="og:description" content="The flattest walking or '
-            'cycling route between any two places in San Francisco, and every '
-            'route between it and the shortest one.">',
+            f'<meta property="og:site_name" content="{PRODUCT_NAME}">',
+            f'<meta property="og:description" content="{_DESCRIPTION}">',
             f'<meta property="og:url" content="{SITE_URL}">',
             f'<meta property="og:image" content="{SITE_URL}preview.jpg">',
             f'<meta property="og:image:secure_url" content="{SITE_URL}preview.jpg">',
             '<meta property="og:image:type" content="image/jpeg">',
             '<meta property="og:image:width" content="1200">',
             '<meta property="og:image:height" content="630">',
-            '<meta property="og:image:alt" content="A map of San Francisco with a fan of '
-            'walking routes between Trick Dog and the dragon in Golden Gate Park">',
+            f'<meta property="og:image:alt" content="A map of {CITY_NAME} with a fan of '
+            'routes between two places, from the shortest to the flattest">',
             '<meta name="twitter:card" content="summary_large_image">',
             f'<meta name="twitter:title" content="{PRODUCT_NAME}">',
-            '<meta name="twitter:description" content="The flattest walking or cycling '
-            'route between any two places in San Francisco, and every route between '
-            'it and the shortest one.">',
+            f'<meta name="twitter:description" content="{_DESCRIPTION}">',
             f'<meta name="twitter:image" content="{SITE_URL}preview.jpg">',
             f'<link rel="preload" href="{payload["bundle_url"]}" as="fetch" crossorigin>',
         ])
@@ -245,6 +242,9 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
     return html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
 
 
+_DESCRIPTION = ("The flattest walking or cycling route between any two places i"
+                "n Seattle, and every route between it and the shortest one.")
+
 _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 <rect width="32" height="32" rx="7" fill="#0f8f6f"/>
 <path d="M5 22 C10 22 11 12 16 12 S22 20 27 10" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>
@@ -252,19 +252,14 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 """
 
 
-#: Where the route page opens before anyone types: Trick Dog, in the
-#: Mission, to Naga & the Captainess, the 100-foot sea-serpent sculpture in
-#: the Rainbow Falls pond on JFK Promenade in Golden Gate Park. Chosen by
-#: scoring every pair of well-known Mission bars and Golden Gate Park spots
-#: on the frontier search: the shortest path climbs over the Castro and
-#: Buena Vista hills, the flattest saves about half the climbing for 10%
-#: more distance, and the frontier holds some eighty distinct routes.
+#: Where the route page opens before anyone types: the Fremont Troll to
+#: Pike Place Market, across the Ship Canal and past Queen Anne hill.
 #: Each entry is (label, place names to try in order, fallback), where the
 #: fallback is a neighborhood access point or a (lon, lat) pair for a spot
 #: the index does not carry.
 _DEFAULT_TRIP = (
-    ("Trick Dog", ("Trick Dog",), "Mission"),
-    ("The Dragon, Golden Gate Park", (), (-122.4779, 37.7716)),
+    ("Fremont Troll", ("Fremont Troll",), (-122.3473, 47.6510)),
+    ("Pike Place Market", ("Pike Place Market",), (-122.3422, 47.6097)),
 )
 
 
@@ -385,12 +380,37 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     (SITE_DIR / "favicon.svg").write_text(_FAVICON, encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")
     # GitHub Pages reads the custom domain from here on branch deploys and
-    # from Settings -> Pages on Actions deploys; shipping it covers both
-    (SITE_DIR / "CNAME").write_text(SITE_DOMAIN + "\n", encoding="utf-8")
+    # from Settings -> Pages on Actions deploys; shipping it covers both.
+    # Without a domain there must be no CNAME, or Pages redirects to nothing.
+    if SITE_DOMAIN:
+        (SITE_DIR / "CNAME").write_text(SITE_DOMAIN + "\n", encoding="utf-8")
+    else:
+        (SITE_DIR / "CNAME").unlink(missing_ok=True)
     site_bytes = sum(f.stat().st_size for f in SITE_DIR.rglob("*") if f.is_file())
     log.info("wrote %s (%s) and the site in %s (%s)", SIMPLE_HTML.name,
              human_bytes(SIMPLE_HTML.stat().st_size), SITE_DIR.name, human_bytes(site_bytes))
     return SIMPLE_HTML
+
+
+def _points(ctx) -> dict:
+    """Neighborhood access points per mode, as {name: [lon, lat]}."""
+    pts = {}
+    for mode, gdf in ctx.points.items():
+        g = gdf.to_crs("EPSG:4326")
+        pts[mode] = {r["neighborhood"]: [round(r.geometry.x, 6),
+                                         round(r.geometry.y, 6)]
+                     for _, r in g.iterrows()}
+    return pts
+
+
+def make_route_page(ctx) -> Path:
+    """Write the route finder (one file and the site) without the analysis
+    layers the explorer needs."""
+    from .webgraph import build_payload
+
+    graph = build_payload(ctx.edges, ctx.directed)
+    with step("writing the route page", log):
+        return _write_route_page(ctx, graph, _points(ctx))
 
 
 def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
@@ -407,13 +427,7 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
         layers = build_layers(ctx, corridors, passes, barriers, basins)
 
     graph = build_payload(ctx.edges, ctx.directed)
-
-    pts = {}
-    for mode, gdf in ctx.points.items():
-        g = gdf.to_crs("EPSG:4326")
-        pts[mode] = {r["neighborhood"]: [round(r.geometry.x, 6),
-                                         round(r.geometry.y, 6)]
-                     for _, r in g.iterrows()}
+    pts = _points(ctx)
     names = sorted(set(pts.get("walk", {})) | set(pts.get("bike", {})))
 
     with step("bundling and compressing the map payload", log):

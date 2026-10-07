@@ -1,4 +1,4 @@
-/* San Francisco flat routes -- the route page.
+/* Seattle flat routes -- the route page.
  *
  * One card: where from, where to, and a slider from the shortest route to
  * the flattest. Everything runs in the page: the graph and the cost model
@@ -321,7 +321,7 @@
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.5,
+        center: [47.615, -122.335], zoom: 12, minZoom: 10.5, maxZoom: 18, zoomSnap: 0.5,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(

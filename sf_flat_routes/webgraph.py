@@ -180,6 +180,12 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
         np.add.at(indptr, fi + 1, 1)
         indptr = np.cumsum(indptr).astype("<i4")
 
+        # arcs point at an edge by its row in ``edges`` (the order the
+        # geometry and attributes are packed in), not by edge_id: ids have
+        # gaps wherever metrics dropped an edge with no usable elevation
+        edge_pos = pd.Index(edges["edge_id"]).get_indexer(d["edge_id"])
+        assert (edge_pos >= 0).all(), "an arc refers to an edge that was not packed"
+
         classes = sorted(set(edges["cls"].dropna().unique())
                          | set(d["cls"].dropna().unique()))
         cls_idx = {c: i for i, c in enumerate(classes)}
@@ -192,7 +198,7 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
         # larger file.
         arcs = {
             "head": ti.astype("<i4"),
-            "edge": d["edge_id"].to_numpy().astype("<i4"),
+            "edge": edge_pos.astype("<i4"),
             "len": _u16(d["length_m"], DM),
             "gain": _u16(d["cum_gain"], CM),
             "loss": _u16(d["cum_loss"], CM),
@@ -227,11 +233,6 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
         name_idx = {n: i + 1 for i, n in enumerate(name_values)}
         buckets = np.digitize(edges["max_abs_grade"].fillna(0.0).to_numpy(),
                               [0.03, 0.05, 0.08, 0.10, 0.15]).astype("<u1")
-        # edge ids are a contiguous 0..n-1 range by construction, so storing
-        # them (and a reverse lookup in the browser) would be pure overhead
-        assert np.array_equal(edges["edge_id"].to_numpy(),
-                              np.arange(len(edges))), \
-            "edge ids are expected to be a contiguous range"
         edge_attrs = {
             "name": names.map(lambda n: name_idx.get(n, 0)).to_numpy().astype("<u2"),
             "cls": edges["cls"].map(cls_idx).fillna(0).to_numpy().astype("<u1"),
@@ -244,7 +245,7 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
                            .clip(0, 6000), DM),
             "lowstress": edges["low_stress"].fillna(False).to_numpy().astype("<u1"),
             # bike comfort multiplier, hundredths (100 = an ordinary block),
-            # from the SFMTA bikeway network where it is on disk
+            # from the SDOT bike facilities where it is on disk
             "stress": np.clip(np.round(bike_stress(edges, facility) * STRESS_Q),
                               1, 255).astype("<u1"),
         }

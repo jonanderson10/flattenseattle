@@ -6,6 +6,7 @@
     python -m sf_flat_routes analyze        # pairs, Pareto, corridors, passes
     python -m sf_flat_routes validate       # checks against known ground truth
     python -m sf_flat_routes map            # interactive + static maps
+    python -m sf_flat_routes site           # the route finder alone (no analysis)
     python -m sf_flat_routes report         # written analysis of the findings
     python -m sf_flat_routes all            # everything, in order
     python -m sf_flat_routes route --from Mission --to "Outer Sunset"
@@ -47,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("analyze", "neighborhood pairs, Pareto fronts, corridors, passes"),
         ("validate", "validate the model against known ground truth"),
         ("map", "render the interactive and static maps"),
+        ("site", "build only the route finder (needs build-network, not analyze)"),
         ("report", "write the analysis of major findings"),
         ("all", "run every stage in order"),
     ]:
@@ -137,6 +139,14 @@ def cmd_map(args) -> int:
     return 0
 
 
+def cmd_site(args) -> int:
+    from .pipeline import build_context
+    from .viz_interactive import make_route_page
+
+    make_route_page(build_context())
+    return 0
+
+
 def cmd_report(args) -> int:
     from .report import write_report
     path = write_report()
@@ -206,7 +216,8 @@ def cmd_all(args) -> int:
 _DISPATCH = {
     "sources": cmd_sources, "download": cmd_download,
     "build-network": cmd_build_network, "analyze": cmd_analyze,
-    "validate": cmd_validate, "map": cmd_map, "report": cmd_report,
+    "validate": cmd_validate, "map": cmd_map, "site": cmd_site,
+    "report": cmd_report,
     "route": cmd_route, "all": cmd_all,
     "sensitivity": cmd_sensitivity, "summarize": cmd_summarize,
 }

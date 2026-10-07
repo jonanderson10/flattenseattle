@@ -1,4 +1,4 @@
-/* San Francisco flat routes -- the routing engine.
+/* Seattle flat routes -- the routing engine.
  *
  * The whole routable graph is embedded (see sf_flat_routes/webgraph.py), so
  * routing happens in the browser: a Dijkstra over ~160,000 directed arcs with
@@ -704,7 +704,7 @@ class Grid {
 window.Graph = Graph; window.Geometry = Geometry; window.Grid = Grid;
 window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle; window.MinHeap = MinHeap;
 
-/* San Francisco flat routes -- the route page.
+/* Seattle flat routes -- the route page.
  *
  * One card: where from, where to, and a slider from the shortest route to
  * the flattest. Everything runs in the page: the graph and the cost model
@@ -1027,7 +1027,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.5,
+        center: [47.615, -122.335], zoom: 12, minZoom: 10.5, maxZoom: 18, zoomSnap: 0.5,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(
