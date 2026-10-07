@@ -44,6 +44,7 @@ import pandas as pd
 
 from .bikeways import BIKEWAYS_GEOJSON, conflate, stress as bike_stress
 from .config import GRADE_THRESHOLDS, MODES, ROUTING_PROFILES
+from .network import _NON_STREET
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.webgraph")
@@ -195,6 +196,17 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
             avail, in_scc = _mode_availability(directed, mode, node_index)
             flags |= (avail.astype("<u1") << bit)
             node_flags |= (in_scc.astype("<u1") << bit)
+        # bit 3 marks a street corner: a node on a street, not on a footway,
+        # path or stair, and not underground. Searched places and clicks snap
+        # to one, so a route to Pike Place Market ends on Pike Street rather
+        # than down in the market's lower levels.
+        tunnel = directed["edge_id"].map(edges.set_index("edge_id")["is_tunnel"]).fillna(False)
+        on_street = (~directed["cls"].isin(_NON_STREET) & ~tunnel.astype(bool)).to_numpy()
+        corner = np.zeros(len(nodes), dtype=bool)
+        for col in ("from_node", "to_node"):
+            idx = directed[col].map(node_index).to_numpy()
+            corner[idx[on_street]] = True
+        node_flags |= (corner.astype("<u1") << 3)
         keep = flags > 0
         d = directed[keep].reset_index(drop=True)
         flags = flags[keep]

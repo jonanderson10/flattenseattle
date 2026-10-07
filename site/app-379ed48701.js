@@ -756,6 +756,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
    * (7.5 miles instead of 4.6 to save 55 ft, on the default trip), which
    * nobody would call a route, so the frontier is cut there. */
   const ALPHA_MAX = 200;
+  // furthest a pin may move to reach a street corner before a path will do
+  const CORNER_MAX_M = 300;
   /* frontier points closer than this in climbing are merged */
   const EPS_GAIN_CM = 50;
   /* the same tolerance inside the search, at intermediate nodes */
@@ -1088,13 +1090,22 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     /* ---------------------------------------------------------- endpoints */
+    /* Snap to the nearest street corner (node flag bit 3); only where there
+     * is none within CORNER_MAX_M, deep in a park, to the nearest path node. */
     nearestNode(lon, lat) {
-      const bit = this.graph.modeBit(this.state.mode);
-      return this.nodeGrid.nearest(lon, lat, (i) => (this.graph.nodeFlags[i] & bit) !== 0);
+      const g = this.graph, bit = g.modeBit(this.state.mode);
+      const corner = this.nodeGrid.nearest(lon, lat,
+        (i) => (g.nodeFlags[i] & bit) !== 0 && (g.nodeFlags[i] & 8) !== 0);
+      if (corner >= 0) {
+        const kx = 111320 * Math.cos(lat * Math.PI / 180);
+        const d = Math.hypot((g.nodeLon(corner) - lon) * kx, (g.nodeLat(corner) - lat) * 111320);
+        if (d <= CORNER_MAX_M) return corner;
+      }
+      return this.nodeGrid.nearest(lon, lat, (i) => (g.nodeFlags[i] & bit) !== 0);
     },
-    /* A point is always a routable street corner: whatever was clicked or
-     * searched snaps to the nearest one, so the pin sits where the route
-     * actually starts rather than in the bay or the middle of a park. */
+    /* A point is always a routable node: whatever was clicked or searched
+     * snaps to one, so the pin sits where the route actually starts rather
+     * than in the bay or the middle of a building. */
     pointAt(lon, lat, label) {
       const node = this.nearestNode(lon, lat);
       if (node < 0) return null;
