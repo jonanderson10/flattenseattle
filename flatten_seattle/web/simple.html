@@ -24,10 +24,14 @@
       <span class="pin" aria-hidden="true"></span>
       <ul class="suggest" id="from_s" role="listbox" hidden></ul>
     </div>
-    <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination">&#8645;</button>
+    <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination"><svg class="ic-swap" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 16V4M4.9 6.1L7 4l2.1 2.1M13 4v12M10.9 13.9L13 16l2.1-2.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="swap loopbtn" id="loopbtn" type="button" title="Make it a loop" aria-label="Make it a loop" aria-pressed="false">
+      <svg class="ic ic-loop" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h6a5 5 0 0 1 0 10H7A5 5 0 0 1 7 5z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.3 2.9l2.1 2.1-2.1 2.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle class="a" cx="10" cy="15" r="2.4"/></svg>
+      <svg class="ic ic-line" viewBox="0 0 20 20" aria-hidden="true"><line x1="5" y1="15" x2="15" y2="5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle class="a" cx="4.6" cy="15.4" r="2.6"/><circle class="b" cx="15.4" cy="4.6" r="2.6"/></svg>
+    </button>
   </div>
   <div class="row">
-    <div class="field">
+    <div class="field" id="tofield">
       <label for="to">To</label>
       <input id="to" type="text" autocomplete="off" spellcheck="false" placeholder="Or click the map">
       <span class="pin to" aria-hidden="true"></span>
@@ -42,6 +46,10 @@
     <input type="checkbox" id="calm" checked>
     <span>Prefer calm streets <small>bike lanes and quiet streets count shorter, busy arterials longer</small></span>
   </label>
+  <label class="calm" id="obrow" hidden>
+    <input type="checkbox" id="outback">
+    <span>Allow out and back <small>the same streets there and back, often the flattest way</small></span>
+  </label>
   <div class="statusrow">
     <div class="status" id="status"></div>
     <button class="link" id="share" type="button" hidden>Copy link</button>
@@ -49,35 +57,39 @@
   <input id="sharebox" type="text" readonly hidden aria-label="Link to this route">
   <div class="slider">
     <input type="range" id="sl" min="0" max="1" step="0.001" value="1" aria-label="From shortest to flattest">
-    <div class="ends"><span>Shortest</span><b id="slpos"></b><span>Flattest</span></div>
+    <div class="ends"><span id="end0">Shortest</span><b id="slpos"></b><span id="end1">Flattest</span></div>
   </div>
   <div class="result" id="result" hidden>
     <div class="stat"><div class="v" id="v_dist"></div><div class="k">distance</div></div>
     <div class="stat"><div class="v" id="v_climb"></div><div class="k">climbing</div></div>
     <div class="stat"><div class="v" id="v_grade"></div><div class="k">steepest</div></div>
   </div>
+  <canvas id="prof" width="760" height="184" hidden></canvas>
   <div class="delta" id="delta"></div>
   <div class="turns" id="turns" hidden></div>
-  <canvas id="prof" width="760" height="184" hidden></canvas>
   <details>
     <summary>How this works</summary>
-    <p class="fine">Routes are computed in your browser over the whole street
-    network, using USGS 1&nbsp;m lidar elevation and the Overture /
-    OpenStreetMap street graph. The slider runs along the whole trade-off
-    between distance and climbing: every route that nothing else beats on
-    both counts, from the shortest path to the flattest one worth walking
-    (where a foot of climb costs 200 ft of walking; beyond that the routes
-    stop being routes). Sliding right never shortens the route and never
-    adds climbing. Climbing is cumulative gain, not the net difference
-    between the endpoints. Stairways are allowed on foot and excluded on a
-    bike. On a bike, <i>prefer calm streets</i> measures distance in comfort:
-    a block with a protected lane or path (SDOT bike facilities) counts as
-    0.8 of its length, a quiet street as 1, a busy arterial without a lane as
-    1.4 to 2. Faint lines show the other routes along the way. Place search is offline: street intersections,
-    places and addresses for Seattle are built into this page. Routes stop
-    at the city limits: for Mercer Island or the Eastside, they take you to
-    the start of the I-90 or SR 520 bridge.
-    <a href="/*__REPO_URL__*/">Source, data and the full analysis</a>.</p>
+    <p class="fine">Routes are computed in your browser over the whole
+    street network, with USGS 1&nbsp;m lidar elevation on the Overture /
+    OpenStreetMap street graph. The slider runs the whole trade-off between
+    distance and climbing: every route nothing else beats on both, from
+    the shortest to the flattest worth walking. Sliding right never
+    shortens the route and never adds climbing. Climbing is total gain,
+    not the difference between the endpoints. Stairs count on foot, not
+    on a bike.</p>
+    <p class="fine">The loop button turns the trip into a loop from one
+    start: the slider sets the distance, dozens of loops of about that
+    length are tried in every direction and the flattest is shown; tick
+    <i>allow out and back</i> to include the same streets there and back,
+    which is often flatter still. On a
+    bike, <i>prefer calm streets</i> counts protected lanes, greenways and
+    trails (SDOT bike facilities) as shorter than they are and busy
+    arterials as longer.</p>
+    <p class="fine">Place search is offline: the city's intersections,
+    places and addresses are built into this page. Routes stop at the city
+    limits: for Mercer Island or the Eastside, they take you to the start
+    of the I-90 or SR 520 bridge.
+    <a href="/*__REPO_URL__*/">Source and data</a>.</p>
   </details>
   <p class="credit-inline">adapted from <a href="https://www.flattensf.com">flattensf</a> by <a href="https://almostimplemented.com">Drew Edwards</a></p>
 </section>

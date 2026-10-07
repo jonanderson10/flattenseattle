@@ -142,8 +142,98 @@ def page_results():
         page.evaluate("() => document.getElementById('calm').click()")
         page.wait_for_function("App.family && !App.family.partial && !App.state.calm", timeout=120_000)
         out["calm_off"] = page.evaluate(streets)
+        # loop mode: the engine's loops, then the toggle, then a shared link
+        out["loops"] = page.evaluate("""() => {
+            const g = App.graph, src = App.nearestNode(-122.42713, 37.75972);
+            const s = g.loops(src, 'walk', { targetM: 5 * 1609.344 });
+            while (!s.step(1e9)) {}
+            const tail = g.reverse().tail;
+            return { src, ms: s.ms, accepted: s.accepted.length, median: s.medianGain,
+              loops: s.loops.map(r => ({ length: r.length, gain: r.gain, overlap: r.overlap, round: r.round,
+                first: tail[r.arcs[0]], last: g.head[r.arcs[r.arcs.length - 1]],
+                connected: r.arcs.every((a, i) => i === 0 || tail[a] === g.head[r.arcs[i - 1]]) })) };
+        }""")
+        out["outback"] = page.evaluate("""() => {
+            const g = App.graph, src = App.nearestNode(-122.4435, 37.8060);   // Marina Green
+            const run = (opts) => { const s = g.loops(src, 'walk', Object.assign({ targetM: 4 * 1609.344 }, opts));
+              while (!s.step(1e9)) {} return s.loops.map(r => ({ gain: r.gain, kind: r.kind, overlap: r.overlap, length: r.length })); };
+            return { loops: run({}), ob: run({ outBack: true }) };
+        }""")
+        page.evaluate("""() => {
+            document.querySelector('#mode button[data-v=walk]').click();
+            App.setPoint('from', App.pointAt(-122.4113, 37.7604, 'Trick Dog'), false);
+            App.setPoint('to', App.pointAt(-122.4435, 37.8060, 'Marina Green'), false);
+            App.recompute('auto');
+        }""")
+        page.wait_for_function("App.family && !App.family.partial", timeout=120_000)
+        page.click("#loopbtn")
+        page.wait_for_function("App.family && App.family.loop", timeout=60_000)
+        page.wait_for_timeout(400)
+        out["loop_ui"] = page.evaluate("""() => ({
+            looping: document.getElementById('card').classList.contains('looping'),
+            toWidth: document.getElementById('tofield').getBoundingClientRect().width,
+            pressed: document.getElementById('loopbtn').getAttribute('aria-pressed'),
+            slMax: +document.getElementById('sl').max, hash: location.hash,
+            stats: App.shown.stats.distance_m, target: App.family.targetM,
+            delta: document.getElementById('delta').textContent,
+            markers: App.markers.getLayers().length })""")
+        page.click("#loopbtn")
+        page.wait_for_function("App.family && !App.family.loop && !App.family.partial", timeout=120_000)
+        page.wait_for_timeout(400)
+        out["loop_off"] = page.evaluate("""() => ({ to: document.getElementById('to').value,
+            toWidth: document.getElementById('tofield').getBoundingClientRect().width,
+            hash: location.hash, slMax: +document.getElementById('sl').max })""")
+        # a shared loop link reopens the same loop
+        page.goto(SIMPLE_HTML.resolve().as_uri() + "#l~-122.42713~37.75972~w~3.5~1~Dolores_20Park",
+                  wait_until="load", timeout=240_000)
+        page.reload(wait_until="load", timeout=240_000)
+        page.wait_for_function("window.App && App.family && App.family.loop", timeout=240_000)
+        out["loop_link"] = page.evaluate("""() => ({ loop: App.state.loop, mi: App.state.loopMi,
+            idx: App.state.loopIdx, from: document.getElementById('from').value,
+            n: App.family.unique.length, slVal: +document.getElementById('sl').value })""")
         browser.close()
     return out, errors
+
+
+def test_loops_close_on_themselves_and_are_flat(page_results):
+    out, _ = page_results
+    r = out["loops"]
+    assert r["accepted"] >= 10 and len(r["loops"]) >= 2, r
+    target = 5 * 1609.344
+    for lp in r["loops"]:
+        assert lp["first"] == r["src"] and lp["last"] == r["src"] and lp["connected"], lp
+        assert abs(lp["length"] - target) <= 0.12 * target, lp
+        assert lp["overlap"] <= 0.3 and lp["round"] >= 0.2, lp
+    # the flattest loop climbs well under what a typical loop from here does
+    assert r["loops"][0]["gain"] < 0.75 * r["median"], r
+    assert r["ms"] < 5000, r
+
+
+def test_out_and_backs_are_offered_only_when_allowed_and_are_flatter(page_results):
+    out, _ = page_results
+    r = out["outback"]
+    assert all(lp["kind"] != "outback" for lp in r["loops"])
+    best = r["ob"][0]
+    # from the Marina the flattest run is the promenade there and back
+    # (overlap counts the second pass over a street, so there and back is 0.5)
+    assert best["kind"] == "outback" and best["overlap"] > 0.4, best
+    assert best["gain"] < 0.5 * r["loops"][0]["gain"], (best, r["loops"][0])
+    assert abs(best["length"] - 4 * 1609.344) <= 0.25 * 1609.344
+
+
+def test_the_loop_button_folds_the_destination_away_and_back(page_results):
+    out, errors = page_results
+    on, off, link = out["loop_ui"], out["loop_off"], out["loop_link"]
+    assert not errors, errors[:4]
+    assert on["looping"] and on["pressed"] == "true" and on["toWidth"] < 2
+    assert on["slMax"] == 15 and on["hash"].startswith("#l~")
+    assert on["markers"] == 1
+    assert abs(on["stats"] - on["target"]) <= 0.15 * on["target"]
+    assert "loop" in on["delta"]
+    assert off["to"] == "Marina Green" and off["toWidth"] > 100
+    assert off["slMax"] == 1 and off["hash"].startswith("#t~")
+    assert link["loop"] and link["mi"] == 3.5 and link["from"] == "Dolores Park"
+    assert link["slVal"] == 3.5 and link["idx"] == min(1, link["n"] - 1)
 
 
 def test_calm_streets_keep_a_bike_off_divisadero(page_results):

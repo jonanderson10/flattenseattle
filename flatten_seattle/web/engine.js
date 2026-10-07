@@ -369,6 +369,318 @@ class Graph {
     return targets.map(t => (seen[t] === stamp && done[t]) ? dist[t] : Infinity);
   }
 
+  /* One Dijkstra over a per-arc cost array: forward from src, or with
+   * reverse, backward into src (dist[v] is then the cost of v -> src and
+   * prev[v] the first arc of that path). It can stop at a target, and edges
+   * marked in pen cost (1 + penK) times as much, which is how a loop's way
+   * home is pushed off the streets it went out on. len and gain carry the
+   * real length and climbing (m) of each tree path. */
+  tree(src, mode, cost, { reverse = false, target = -1, pen = null, penNode = null, penK = 0, minPerM = 0 } = {}) {
+    const n = this.n, bit = this.modeBit(mode), rev = reverse ? this.reverse() : null;
+    const dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1);
+    const done = new Uint8Array(n), len = new Float64Array(n), gain = new Float64Array(n);
+    const heap = new MinHeap();
+    // with a target and a known floor on cost per metre (minPerM), the
+    // search is A*: straight-line distance to the target times that floor
+    // never overestimates, so the route found is still the cheapest
+    const astar = target >= 0 && minPerM > 0;
+    const cosT = Math.cos(this.nodeLat(src) * Math.PI / 180);
+    const tx = astar ? this.nodeLon(target) * 111320 * cosT : 0, ty = astar ? this.nodeLat(target) * 110540 : 0;
+    const h = astar ? (v) => minPerM * Math.hypot(this.nodeLon(v) * 111320 * cosT - tx, this.nodeLat(v) * 110540 - ty) : () => 0;
+    dist[src] = 0; heap.push(h(src), src);
+    while (heap.n > 0) {
+      const u = heap.pop();
+      if (done[u]) continue;
+      const du = dist[u];
+      done[u] = 1;
+      if (u === target) break;
+      const lo = reverse ? rev.indptr[u] : this.indptr[u], hi = reverse ? rev.indptr[u + 1] : this.indptr[u + 1];
+      for (let k = lo; k < hi; k++) {
+        const a = reverse ? rev.arcs[k] : k;
+        if ((this.arcFlags[a] & bit) === 0) continue;
+        const v = reverse ? rev.tail[a] : this.head[a];
+        let c = cost[a];
+        if ((pen !== null && pen[this.arcEdge[a]]) || (penNode !== null && penNode[v])) c *= 1 + penK;
+        const nd = du + c;
+        if (nd < dist[v]) {
+          dist[v] = nd; prev[v] = a; heap.push(nd + h(v), v);
+          len[v] = len[u] + this.arcLen[a] / this.DM; gain[v] = gain[u] + this.arcGain[a] / this.CM;
+        }
+      }
+    }
+    return { src, dist, prev, len, gain, done, reverse };
+  }
+
+  /* Corners a loop may turn at: real intersections, where at least three
+   * ways meet and at least one is a street (not only footways, service
+   * lanes or steps), so a loop never turns around at the end of a
+   * parking-lot lane. Cached per mode. */
+  corners(mode) {
+    this._corners = this._corners || {};
+    if (this._corners[mode]) return this._corners[mode];
+    const STREETS = new Set(["trunk", "primary", "secondary", "tertiary", "residential", "unclassified",
+      "living_street", "pedestrian", "cycleway", "path"]);
+    const street = this.meta.classes.map((c) => STREETS.has(c));
+    const bit = this.modeBit(mode), { indptr, arcs, tail } = this.reverse();
+    const ok = new Uint8Array(this.n), seen = new Int32Array(this.n).fill(-1);
+    for (let u = 0; u < this.n; u++) {
+      let deg = 0, onStreet = false;
+      const touch = (v, a) => {
+        if ((this.arcFlags[a] & bit) === 0) return;
+        if (street[this.arcCls[a]]) onStreet = true;
+        if (seen[v] !== u) { seen[v] = u; deg++; }
+      };
+      for (let a = this.indptr[u]; a < this.indptr[u + 1]; a++) touch(this.head[a], a);
+      for (let k = indptr[u]; k < indptr[u + 1]; k++) touch(tail[arcs[k]], arcs[k]);
+      ok[u] = deg >= 3 && onStreet ? 1 : 0;
+    }
+    this._corners[mode] = ok;
+    return ok;
+  }
+
+  /* arcs from the tree's root to v (forward tree) or from v to the root
+   * (reverse tree) */
+  treePath(t, v) {
+    const tail = this.reverse().tail, arcs = [];
+    if (!t.done[v]) return null;
+    if (!t.reverse) {
+      for (let guard = 0; v !== t.src; guard++) {
+        const a = t.prev[v]; if (a < 0 || guard > this.n) return null;
+        arcs.push(a); v = tail[a];
+      }
+      return arcs.reverse();
+    }
+    for (let guard = 0; v !== t.src; guard++) {
+      const a = t.prev[v]; if (a < 0 || guard > this.n) return null;
+      arcs.push(a); v = this.head[a];
+    }
+    return arcs;
+  }
+
+  /* Flat loops: routes that start and end at src and run about targetM
+   * metres, as flat as the streets around src allow.
+   *
+   * A loop is built from turnaround corners. One search outward and one
+   * inward from src give every corner's flattest way out and way back.
+   * The corners around src are split into sectors by bearing; in each,
+   * the corner that looks cheapest to reach and return from is tried as a
+   * petal (out to it, home by a different way: the streets used on the way
+   * out cost penK times more on the way back), pairs of corners about a
+   * sixth of a turn apart as triangles (out, across, home), and for loops
+   * over five miles, three corners a quarter turn apart.
+   * A loop whose length misses the target by more than a tolerance is
+   * retried once with a corner scaled nearer or farther. Loops that
+   * repeat too much of themselves (an out-and-back) are dropped; the rest
+   * are ranked by climbing, length breaking ties.
+   *
+   * Like pareto(), it returns a search object; step(budgetMs) until done.
+   * search.last is the most recent well-shaped loop built, so the page can
+   * show the scan as it happens.
+   * Results: search.loops (best first, mutually distinct) and
+   * search.accepted (every loop that met the length and overlap tests). */
+  loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 24, tol = 0.12,
+    maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2,
+    tolM = 0.25 * 1609.344, retries = 3, outBack = false } = {}) {
+    const g = this, T = targetM, L = g.lengths(stress);
+    // a few metres per arc keeps routes off zigzags through tiny segments
+    const cost = new Float64Array(g.m);
+    for (let a = 0; a < g.m; a++) cost[a] = L[a] / g.DM + alpha * g.arcGain[a] / g.CM + perArc;
+    const search = { loops: [], accepted: [], loose: [], all: [], tried: 0, done: false, ms: 0, shortfall: false };
+    // a loop counts when it is within tolM of the target (or tol of it, if
+    // that is tighter, for short loops); corners are rescaled up to
+    // `retries` times to land in that window
+    const t0 = performance.now();
+    const band = Math.min(tol * T, tolM);
+    let F = null, B = null, bySector = null;
+    const jobs = [];
+    const cosLat = Math.cos(g.nodeLat(src) * Math.PI / 180);
+    const sectorOf = (v) => {
+      const dx = (g.nodeLon(v) - g.nodeLon(src)) * cosLat, dy = g.nodeLat(v) - g.nodeLat(src);
+      return Math.floor(((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI)) * sectors) % sectors;
+    };
+    // the corner in a sector whose way out is about `want` metres and whose
+    // estimated loop (flattest out + flattest back) climbs least
+    const pick = (s, want, spread, withBack) => {
+      let best = -1, bestScore = Infinity;
+      for (const v of bySector[s]) {
+        const lf = F.len[v];
+        if (Math.abs(lf - want) > spread) continue;
+        const score = F.gain[v] + (withBack ? B.gain[v] : 0) + 0.002 * Math.abs(lf - want);
+        if (score < bestScore) { bestScore = score; best = v; }
+      }
+      return best;
+    };
+    // cost per metre is never below the shortest-looking length factor
+    // (0.8 on a protected lane in calm-streets mode), less a little for the
+    // quantised lengths: the floor that keeps A* exact
+    const minPerM = stress ? 0.78 : 0.98;
+    const leg = (from, to, pen, penNode) => {
+      const t = g.tree(from, mode, cost, { target: to, pen, penNode, penK, minPerM });
+      return t.done[to] ? g.treePath(t, to) : null;
+    };
+    const mark = (pen, arcs) => { for (const a of arcs) pen[g.arcEdge[a]] = 1; };
+    // corners within nearM of the streets already used, except around the
+    // start, which every leg has to pass through: the way home avoids them,
+    // so a loop is not the same street out and the next street back
+    const XM = 111320 * Math.cos(g.nodeLat(src) * Math.PI / 180), YM = 110540;
+    const px = (v) => g.nodeLon(v) * XM, py = (v) => g.nodeLat(v) * YM;
+    const sx = px(src), sy = py(src);
+    let nodeGrid = null;   // cell -> nodes, over every corner the loops can reach
+    const cellKey = (cx, cy) => cx * 100003 + cy;
+    const markNear = (penNode, arcs) => {
+      const r2 = nearM * nearM, home2 = (1.5 * nearM) ** 2;
+      for (const a of arcs) {
+        const v0 = g.head[a], x0 = px(v0), y0 = py(v0);
+        const cx = Math.floor(x0 / nearM), cy = Math.floor(y0 / nearM);
+        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+          const cell = nodeGrid.get(cellKey(cx + i, cy + j)); if (!cell) continue;
+          for (const v of cell) {
+            if (penNode[v]) continue;
+            const x = px(v), y = py(v);
+            if ((x - x0) ** 2 + (y - y0) ** 2 < r2 && (x - sx) ** 2 + (y - sy) ** 2 >= home2) penNode[v] = 1;
+          }
+        }
+      }
+    };
+    const measure = (arcs) => {
+      let len = 0, gain = 0, rep = 0;
+      const seen = new Map();
+      for (const a of arcs) {
+        const l = g.arcLen[a] / g.DM, e = g.arcEdge[a];
+        len += l; gain += g.arcGain[a] / g.CM;
+        if (seen.has(e)) rep += l; else seen.set(e, 1);
+      }
+      let area = 0, prevX = sx, prevY = sy;
+      for (const a of arcs) { const x = px(g.head[a]) - sx, y = py(g.head[a]) - sy; area += (prevX - sx) * y - x * (prevY - sy); prevX = x + sx; prevY = y + sy; }
+      const round = len > 0 ? 4 * Math.PI * Math.abs(area / 2) / (len * len) : 0;
+      return { len, gain, overlap: len > 0 ? rep / len : 1, round };
+    };
+    const consider = (arcs, kind) => {
+      if (!arcs || !arcs.length) return null;
+      search.tried++;
+      const m = measure(arcs);
+      const r = { arcs, length: m.len, gain: m.gain, overlap: m.overlap, round: m.round, kind };
+      // an out-and-back is allowed to be what it is
+      const shaped = kind === "outback" || (m.overlap <= maxOverlap && m.round >= minRound);
+      if (shaped) { search.all.push(r); search.last = r; }
+      if (shaped && Math.abs(m.len - T) <= band) search.accepted.push(r);
+      else if (shaped && Math.abs(m.len - T) <= tol * T) search.loose.push(r);
+      return r;
+    };
+    const petal = (s, want, tries) => {
+      const w = pick(s, want, Math.max(150, 0.06 * T), true);
+      if (w < 0) return;
+      const out = g.treePath(F, w); if (!out) return;
+      const pen = new Uint8Array(g.meta.n_edges), penNode = new Uint8Array(g.n);
+      mark(pen, out); markNear(penNode, out);
+      const back = leg(w, src, pen, penNode); if (!back) return;
+      const r = consider(out.concat(back), "petal");
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => petal(s, want * T / r.length, tries - 1));
+      }
+    };
+    // the flattest way out to a turnaround about half the target away, and
+    // the flattest way back, which is usually the same streets
+    const outAndBack = (s, want, tries) => {
+      const w = pick(s, want, Math.max(150, 0.06 * T), true);
+      if (w < 0) return;
+      const out = g.treePath(F, w), back = g.treePath(B, w);
+      if (!out || !back) return;
+      const r = consider(out.concat(back), "outback");
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => outAndBack(s, want * T / r.length, tries - 1));
+      }
+    };
+    // out to the first corner, across each next one, then home; every leg
+    // avoids the streets the loop has already used
+    const polygon = (ss, want, tries) => {
+      const sp = Math.max(150, 0.06 * T);
+      const vs = ss.map((s, i) => pick(s, want, sp, i === ss.length - 1));
+      if (vs.some((v) => v < 0) || new Set(vs).size < vs.length) return;
+      const pen = new Uint8Array(g.meta.n_edges), penNode = new Uint8Array(g.n);
+      let arcs = g.treePath(F, vs[0]); if (!arcs) return;
+      mark(pen, arcs); markNear(penNode, arcs);
+      for (const [from, to] of vs.slice(1).map((v, i) => [vs[i], v]).concat([[vs[vs.length - 1], src]])) {
+        const l = leg(from, to, pen, penNode); if (!l) return;
+        mark(pen, l); markNear(penNode, l); arcs = arcs.concat(l);
+      }
+      const r = consider(arcs, vs.length === 2 ? "triangle" : "polygon");
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => polygon(ss, want * T / r.length, tries - 1));
+      }
+    };
+    search.step = (budgetMs = 30) => {
+      const start = performance.now();
+      if (!F) {
+        F = g.tree(src, mode, cost);
+        B = g.tree(src, mode, cost, { reverse: true });
+        bySector = Array.from({ length: sectors }, () => []);
+        const corner = g.corners(mode);
+        nodeGrid = new Map();
+        for (let v = 0; v < g.n; v++) {
+          if (!F.done[v] || F.len[v] > 0.75 * T) continue;
+          const k = cellKey(Math.floor(px(v) / nearM), Math.floor(py(v) / nearM));
+          let c = nodeGrid.get(k); if (!c) nodeGrid.set(k, c = []); c.push(v);
+        }
+        for (let v = 0; v < g.n; v++) {
+          if (!F.done[v] || !B.done[v] || v === src || !corner[v]) continue;
+          const lf = F.len[v];
+          if (lf < 0.1 * T || lf > 0.7 * T) continue;
+          bySector[sectorOf(v)].push(v);
+        }
+        for (let s = 0; s < sectors; s++) {
+          if (outBack) jobs.push(() => outAndBack(s, 0.5 * T, retries));
+          jobs.push(() => petal(s, 0.38 * T, retries));
+          jobs.push(() => petal(s, 0.46 * T, retries));
+        }
+        for (const gap of [Math.round(sectors / 6), Math.round(sectors / 4)]) {
+          for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + gap) % sectors], (gap > sectors / 5 ? 0.27 : 0.3) * T, retries));
+        }
+        // longer loops: three corners a quarter turn apart, which keeps the
+        // loop inside the city where two far corners would fall in the bay
+        if (T > 8000) {
+          const q = Math.max(1, Math.round(sectors / 4));
+          for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + q) % sectors, (s + 2 * q) % sectors], 0.21 * T, retries));
+        }
+        if (performance.now() - start > budgetMs) return false;
+      }
+      while (jobs.length) {
+        jobs.shift()();
+        if (performance.now() - start > budgetMs) return false;
+      }
+      // rank, then keep loops that are not near-copies of a better one. When
+      // nothing came close enough to the target (a long loop from the edge
+      // of the city), offer the loop that came closest, and say so.
+      let pool = search.accepted.slice();
+      if (!pool.length && search.loose.length) {
+        pool = search.loose.slice(); search.shortfall = true;
+      }
+      if (!pool.length && search.all.length) {
+        const closest = search.all.slice().sort((x, y) => Math.abs(x.length - T) - Math.abs(y.length - T))[0];
+        pool = [closest]; search.shortfall = true;
+      }
+      pool.sort((x, y) => (x.gain - y.gain) || (Math.abs(x.length - T) - Math.abs(y.length - T)));
+      const edges = (r) => new Set(r.arcs.map((a) => g.arcEdge[a]));
+      const picked = [];
+      for (const r of pool) {
+        const er = edges(r);
+        const similar = picked.some((p) => {
+          let both = 0; for (const e of er) if (p.edges.has(e)) both++;
+          return both / Math.min(er.size, p.edges.size) > 0.6;
+        });
+        if (!similar) picked.push({ r, edges: er });
+        if (picked.length >= keep) break;
+      }
+      search.loops = picked.map((p) => p.r);
+      const gains = search.accepted.map((r) => r.gain).sort((x, y) => x - y);
+      search.medianGain = gains.length ? gains[Math.floor(gains.length / 2)] : NaN;
+      search.ms = performance.now() - t0;
+      search.done = true;
+      return true;
+    };
+    return search;
+  }
+
   /* Reverse adjacency (arcs grouped by head node), built on first use. */
   reverse() {
     if (this._rev) return this._rev;
@@ -528,7 +840,7 @@ class Graph {
 
   /* Aggregate a route exactly as routing.summarise_route does. */
   summarise(arcs) {
-    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0;
+    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0, steep = 0;
     const th = new Array(this.th.length).fill(0);
     for (const a of arcs) {
       const L = this.arcLen[a] / this.DM;
@@ -538,13 +850,19 @@ class Graph {
       loss += this.arcLoss[a] / this.CM;
       const g = this.arcMaxGrade[a] / this.GRADE;
       if (g > maxg) maxg = g;
+      // the steepest figure the route page shows: over a block shorter than
+      // 15 m a peak grade is lidar noise (a 3 m stub at Cesar Chavez reads
+      // 45%), so there the block's average climb stands in, as the analysis
+      // does for its gradient tests (config.MIN_RELIABLE_GRADE_LENGTH_M)
+      const sg = L >= 15 ? g : Math.max(0, (this.arcGain[a] - this.arcLoss[a]) / this.CM / Math.max(L, 1e-6));
+      if (sg > steep) steep = sg;
       wgrade += (this.arcMeanGrade[a] / this.GRADE) * L;
       for (let k = 0; k < th.length; k++) th[k] += this.th[k][a] / this.DM;
     }
     if (!arcs.length) maxg = 0;
     const prof = this.profile(arcs);
     return {
-      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss,
+      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss, steepest: steep,
       max_grade: maxg, avg_abs_grade: dist > 0 ? wgrade / dist : 0,
       thresholds: th, n_edges: arcs.length,
       start_elev_m: prof.z.length ? prof.z[0] : 0,

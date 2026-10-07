@@ -21,6 +21,21 @@ greenway or trail from SDOT's bike facilities counts for less than its
 length, and a busy arterial with no lane counts for more. Untick it, and the
 shortest end of the slider is the true shortest path.
 
+The **loop button** next to swap turns the trip into a run or ride that
+starts and ends in the same place. The slider becomes the loop's length
+(1 to 15 miles), and the page tries dozens of loops of about that length
+in every direction: out to one, two or three turning points (always a
+real intersection) and home by other streets, avoiding any street within
+a block of the way out, and optionally an out-and-back in each direction
+(the flattest way to a turnaround half the distance away, and back).
+Loops that double back on themselves without being an out-and-back, or
+are too thin to be a loop, are dropped, and the flattest of the rest is
+shown, with how much less it climbs than a typical loop of the same length
+from the same start. Out-and-backs are left out unless *Allow out and back*
+is ticked; along the water they usually win (Alki Avenue, the
+Burke-Gilman from Golden Gardens, Green Lake). The search takes well under
+a second, even for a 15-mile loop.
+
 Routes stop at the city limits. Bridges out of the city (I-90 and SR 520)
 end at the shore, so the finder gets you to the bridge.
 
