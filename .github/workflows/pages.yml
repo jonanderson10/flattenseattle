@@ -10,7 +10,7 @@ name: Deploy the route finder
 
 on:
   push:
-    branches: [main, seattle]
+    branches: [main]
     paths: ["site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 

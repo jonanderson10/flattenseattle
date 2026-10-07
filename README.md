@@ -106,7 +106,7 @@ build yet.
 ## Deployment
 
 `.github/workflows/pages.yml` publishes `site/` to GitHub Pages on pushes to
-`main` or `seattle`. The site is committed already built, because CI does
+`main`. The site is committed already built, because CI does
 not have the cached data.
 
 ## Licence
