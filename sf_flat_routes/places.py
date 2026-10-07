@@ -32,7 +32,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .config import CITY_BBOX, CITY_LAT, LON_M_PER_DEG, PROCESSED_DIR
+from .config import CITY_BBOX, CITY_LAT, LON_M_PER_DEG, PLACE_OVERRIDES, PROCESSED_DIR
 from .download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
 from .utils import get_logger, step
 
@@ -291,6 +291,9 @@ def build_places() -> dict:
                    ignore_index=True)
     df = df[(df["lon"].between(CITY_BBOX[0], CITY_BBOX[1]))
             & (df["lat"].between(CITY_BBOX[2], CITY_BBOX[3]))]
+    for name, (lon_o, lat_o) in PLACE_OVERRIDES.items():
+        hit = df["name"] == name
+        df.loc[hit, ["lon", "lat"]] = (lon_o, lat_o)
     df = df.sort_values(["name"]).reset_index(drop=True)
     log.info("places: %d kept of %d POI records plus %d mapped features (%s)",
              len(df) - len(base), len(t), len(base),

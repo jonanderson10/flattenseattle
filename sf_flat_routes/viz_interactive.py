@@ -259,7 +259,7 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 #: the index does not carry.
 _DEFAULT_TRIP = (
     ("Fremont Troll", ("Fremont Troll",), (-122.3473, 47.6510)),
-    ("Pike Place Market", ("Pike Place Market",), (-122.3422, 47.6097)),
+    ("Pike Place Market", ("Pike Place Market",), (-122.34000, 47.60884)),
 )
 
 

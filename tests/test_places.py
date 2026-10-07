@@ -103,6 +103,16 @@ def test_famous_places_are_found_where_they_belong(index):
         assert abs(lo - lon) < 0.004 and abs(la - lat) < 0.004, name
 
 
+@needs_places
+@needs_base
+def test_pike_place_market_is_the_public_market_sign(index):
+    """Hand-placed: the feed puts the market above Western Avenue, but people
+    arrive at the sign at Pike Street and Pike Place. Exactly one entry."""
+    hits = [(lo, la) for n, lo, la in zip(index["names"], index["lon"], index["lat"])
+            if n == "Pike Place Market"]
+    assert hits == [(-122.34, 47.60884)]
+
+
 @needs_addresses
 def test_addresses_pack_into_sorted_uint16_offsets():
     a = places.build_addresses()

@@ -68,6 +68,14 @@ LON_M_PER_DEG = 111320.0 * math.cos(math.radians(CITY_LAT))
 #: Neighborhoods left out of pair routing (none for Seattle).
 EXCLUDED_NEIGHBORHOODS: tuple = ()
 
+#: Hand-placed coordinates (lon, lat) for places whose feed location is not
+#: where anyone would say they arrived. Overture puts Pike Place Market on its
+#: west side above Western Avenue; people mean the Public Market sign at
+#: Pike Street and Pike Place.
+PLACE_OVERRIDES: dict = {
+    "Pike Place Market": (-122.34000, 47.60884),
+}
+
 # --------------------------------------------------------------------------
 # Elevation sampling / smoothing
 # --------------------------------------------------------------------------
