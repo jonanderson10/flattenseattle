@@ -68,18 +68,29 @@ class Bundle {
     this.buf = buf;
     this.manifest = manifest;
     this.decoder = new TextDecoder();
+    this.cache = {};
   }
   has(name) { return !!this.manifest.arrays[name]; }
+  /* Decoding can happen in place, so each array is decoded once and kept. */
   array(name) {
+    return this.cache[name] || (this.cache[name] = this.decodeArray(name));
+  }
+  decodeArray(name) {
     const m = this.manifest.arrays[name];
     if (!m) throw new Error("missing array " + name);
     const T = TYPES[m.t];
+    let out;
     // the offset need not be aligned for the view type, so copy when it is not
     if ((this.buf.byteOffset + m.o) % T.BYTES_PER_ELEMENT === 0) {
-      return new T(this.buf.buffer, this.buf.byteOffset + m.o, m.n);
+      out = new T(this.buf.buffer, this.buf.byteOffset + m.o, m.n);
+    } else {
+      const bytes = this.buf.slice(m.o, m.o + m.n * T.BYTES_PER_ELEMENT);
+      out = new T(bytes.buffer, 0, m.n);
     }
-    const bytes = this.buf.slice(m.o, m.o + m.n * T.BYTES_PER_ELEMENT);
-    return new T(bytes.buffer, 0, m.n);
+    // sent as successive differences: a running sum restores the values, and
+    // wraps in the array's own type exactly as the packer's differences did
+    if (m.d) for (let i = 1; i < out.length; i++) out[i] += out[i - 1];
+    return out;
   }
   text(name) {
     const m = this.manifest.strings[name];
@@ -161,6 +172,12 @@ class Graph {
     this.arcFlags = bundle.array("arc_flags");
     this.th = meta.thresholds.map(t => bundle.array("arc_th" + t));
     this.m = this.head.length;
+    // heads are sent relative to their tail node
+    if (meta.head_rel) {
+      for (let u = 0; u < this.n; u++) {
+        for (let a = this.indptr[u]; a < this.indptr[u + 1]; a++) this.head[a] += u;
+      }
+    }
 
     this.DM = meta.scales.dm; this.CM = meta.scales.cm;
     this.COORD = meta.scales.coord; this.GRADE = meta.scales.grade;

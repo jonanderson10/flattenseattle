@@ -152,3 +152,31 @@ def test_residential_streets_are_walkable_and_bikeable():
     assert len(r) > 10000
     assert r["walk_ok"].mean() > 0.98, r["walk_ok"].mean()
     assert r["bike_ok"].mean() > 0.98, r["bike_ok"].mean()
+
+
+def test_pass_through_pieces_of_a_segment_are_merged():
+    """A street split where a (since removed) driveway met it is one edge
+    again; a split where another street meets it stays."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    from sf_flat_routes.network import merge_pass_through_nodes
+
+    rows = [
+        # segment s: a -- b -- c -- d ; b is pass-through, c meets segment t
+        ("s", 0, "a", "b", [(0, 0), (10, 0)]),
+        ("s", 1, "b", "c", [(10, 0), (20, 0)]),
+        ("s", 2, "c", "d", [(20, 0), (30, 0)]),
+        ("t", 0, "c", "e", [(20, 0), (20, 10)]),
+    ]
+    gdf = gpd.GeoDataFrame(
+        {"segment_id": [r[0] for r in rows], "part": [r[1] for r in rows],
+         "u": [r[2] for r in rows], "v": [r[3] for r in rows],
+         "length_m": [LineString(r[4]).length for r in rows]},
+        geometry=[LineString(r[4]) for r in rows], crs="EPSG:26910")
+    out = merge_pass_through_nodes(gdf)
+    pairs = sorted(zip(out["u"], out["v"]))
+    assert pairs == [("a", "c"), ("c", "d"), ("c", "e")]
+    merged = out[(out["u"] == "a") & (out["v"] == "c")].iloc[0]
+    assert merged["length_m"] == 20.0
+    assert list(merged.geometry.coords) == [(0, 0), (10, 0), (20, 0)]

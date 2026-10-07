@@ -135,3 +135,38 @@ def test_route_metrics_are_internally_consistent():
     net = p["elev_gain_m"] - p["elev_loss_m"]
     endpoint_net = p["end_elev_m"] - p["start_elev_m"]
     assert np.allclose(net, endpoint_net, atol=0.05)
+
+
+def test_untagged_sidewalks_are_dropped(edges):
+    """Seattle's sidewalks reach Overture as plain footways. Left in, they
+    were 35% of the network by length; the street centrelines stand in for
+    them."""
+    share = (edges.loc[edges["cls"] == "footway", "length_m"].sum()
+             / edges["length_m"].sum())
+    assert share < 0.25, f"footway is {share:.0%} of the network"
+
+
+@pytest.mark.parametrize("mode", ["walk", "bike"])
+def test_ballard_locks_stay_crossable(edges, directed, mode):
+    """The walkway over the Locks runs beside a service road that stops at
+    the water, so it looks like a sidewalk. Dropping it would send everyone
+    round by the Ballard Bridge, kilometres out of the way."""
+    import geopandas as gpd
+    import shapely
+
+    from sf_flat_routes.routing import build_route_graph, shortest_paths
+
+    g = build_route_graph(directed, mode)
+    ends = pd.concat([
+        pd.DataFrame({"n": edges["u"], "g": shapely.get_point(edges.geometry.values, 0)}),
+        pd.DataFrame({"n": edges["v"], "g": shapely.get_point(edges.geometry.values, -1)}),
+    ]).drop_duplicates("n")
+    ends = ends[ends["n"].isin(g.node_index)]
+    pts = gpd.GeoSeries(ends["g"].values, crs=edges.crs)
+    north, south = gpd.GeoSeries([shapely.Point(-122.3975, 47.6675),
+                                  shapely.Point(-122.3990, 47.6640)],
+                                 crs="EPSG:4326").to_crs(edges.crs)
+    a, b = (g.index_of(ends["n"].iloc[int(pts.distance(p).argmin())])
+            for p in (north, south))
+    dist, _, _ = shortest_paths(g, g.table["length_m"].to_numpy(), a)
+    assert dist[0, b] < 1200, f"{mode}: {dist[0, b]:.0f} m to cross the Locks"

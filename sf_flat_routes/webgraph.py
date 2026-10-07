@@ -59,6 +59,29 @@ COORD_Q = 1e6      # micro-degrees
 STRESS_Q = 100.0   # hundredths of a comfort multiplier
 
 
+#: Arrays sent as successive differences: node coordinates (in Z-order) and
+#: address fields (sorted by street, then number) change little step to step.
+DELTA_ARRAYS = frozenset({"node_lon", "node_lat", "addr_lon", "addr_lat", "addr_number"})
+#: Douglas-Peucker tolerance for drawn street geometry, metres.
+GEOM_TOLERANCE_M = 1.0
+
+
+def _morton(lon: np.ndarray, lat: np.ndarray, bits: int = 16) -> np.ndarray:
+    """Z-order key interleaving quantised longitude and latitude."""
+    def spread(v):
+        v = v.astype(np.uint64)
+        for shift, mask in ((8, 0x00FF00FF), (4, 0x0F0F0F0F),
+                            (2, 0x33333333), (1, 0x55555555)):
+            v = (v | (v << np.uint64(shift))) & np.uint64(mask)
+        return v
+
+    def quantise(v):
+        span = max(float(v.max() - v.min()), 1e-12)
+        return np.round((v - v.min()) / span * ((1 << bits) - 1))
+
+    return spread(quantise(lon)) | (spread(quantise(lat)) << np.uint64(1))
+
+
 def _b64(arr: np.ndarray) -> str:
     return base64.b64encode(np.ascontiguousarray(arr).tobytes()).decode("ascii")
 
@@ -148,6 +171,13 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
                 if i is not None and not seen[i]:
                     lon[i] = x; lat[i] = y; seen[i] = True
 
+        # Number nodes along a Z-order curve, so that neighbours on the map
+        # are neighbours in the arrays: coordinate deltas and arc heads then
+        # come out small, and gzip packs them far tighter.
+        order = np.argsort(_morton(lon, lat), kind="stable")
+        nodes, lon, lat = nodes[order], lon[order], lat[order]
+        node_index = {n: i for i, n in enumerate(nodes)}
+
         # ---- node elevations, for route elevation profiles ---------
         # Elevations are reconciled to one value per intersection upstream,
         # so a profile sampled at arc boundaries is exact at every corner.
@@ -197,7 +227,8 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
         # and a map that disagrees with its own CSV is worse than a slightly
         # larger file.
         arcs = {
-            "head": ti.astype("<i4"),
+            # relative to the tail node; the browser adds the tail back
+            "head": (ti - fi).astype("<i4"),
             "edge": edge_pos.astype("<i4"),
             "len": _u16(d["length_m"], DM),
             "gain": _u16(d["cum_gain"], CM),
@@ -211,10 +242,13 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
             arcs[f"th{t}"] = _u16(d[f"d_above_{t}"], DM)
 
         # ---- geometry: one polyline string with character offsets ---
+        # Simplified to a metre: the line is only drawn, never measured (arc
+        # lengths come from the full geometry), and the end points are kept.
+        drawn = edges.geometry.simplify(GEOM_TOLERANCE_M).to_crs("EPSG:4326")
         geom_parts: list[str] = []
         offs = np.zeros(len(edges) + 1, dtype="<i4")
         pos = 0
-        for i, geom in enumerate(ll.geometry):
+        for i, geom in enumerate(drawn):
             s = encode_polyline(list(geom.coords))
             geom_parts.append(s)
             pos += len(s)
@@ -273,6 +307,7 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
             "scales": {"dm": DM, "cm": CM, "grade": GRADE_Q, "coord": COORD_Q,
                        "stress": STRESS_Q},
             "bikeways": facility is not None,
+            "head_rel": True,
             "profiles": {
                 name: {
                     "alpha": w.alpha, "beta": w.beta, "gamma": w.gamma,
@@ -288,7 +323,7 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
             },
         }
         return {"arrays": arrays, "geom": geom, "meta": meta,
-                "n_coords": sum(len(g.coords) for g in ll.geometry)}
+                "n_coords": sum(len(g.coords) for g in drawn)}
 
 
 _DTYPE_TAG = {"int32": "i4", "uint32": "u4", "int16": "i2",
@@ -308,11 +343,16 @@ def bundle(graph: dict, strings: dict[str, str]) -> dict:
     off = 0
 
     for name, arr in graph["arrays"].items():
-        raw = np.ascontiguousarray(arr).tobytes()
         tag = _DTYPE_TAG.get(arr.dtype.name)
         if tag is None:
             raise TypeError(f"unsupported dtype {arr.dtype} for {name}")
         manifest_arrays[name] = {"t": tag, "o": off, "n": int(arr.size)}
+        if name in DELTA_ARRAYS and arr.size:
+            # differences wrap in the array's own integer type, exactly as a
+            # running sum into a typed array of that type wraps back
+            arr = np.diff(arr.astype(np.int64), prepend=0).astype(arr.dtype)
+            manifest_arrays[name]["d"] = 1
+        raw = np.ascontiguousarray(arr).tobytes()
         blobs.append(raw)
         off += len(raw)
 

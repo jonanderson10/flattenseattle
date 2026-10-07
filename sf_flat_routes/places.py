@@ -264,8 +264,11 @@ def build_places() -> dict:
                        "conf": conf, "lon": lon, "lat": lat, "support": support})[keep]
     df = df[(df["lon"].between(CITY_BBOX[0], CITY_BBOX[1]))
             & (df["lat"].between(CITY_BBOX[2], CITY_BBOX[3]))]
+    # one record per name: a search for 'Pike Place Market' should find the
+    # market, not also a food stall of that name across downtown. The record
+    # with the most corroborating neighbours wins.
     df = (df.sort_values(["support", "conf"], ascending=False)
-            .drop_duplicates(["name", "group"])
+            .drop_duplicates(["name"])
             .reset_index(drop=True))
     # the mapped feature wins over any POI record of the same name, or of a
     # trailing part of it ('Dolores Park' for 'Mission Dolores Park')
@@ -331,6 +334,36 @@ def build_addresses() -> dict:
     }
 
 
+def _water_mask(dem: np.ndarray, min_px: int = 400) -> np.ndarray:
+    """Hydro-flattened water in a DEM: below the water floor, or dead flat.
+
+    Lidar DEMs replace each water body with a single flat elevation (Puget
+    Sound near 0 m, Lake Washington near 6 m). Land is never exactly flat
+    over a few hundred metres, so a large connected patch with no variation
+    at all is water. Where the DEM carries no water surface (San Francisco
+    leaves it as no-data), this finds nothing and changes nothing.
+    """
+    from scipy import ndimage
+
+    from .config import ELEVATION
+
+    finite = np.isfinite(dem)
+    z = np.where(finite, dem, 0.0)
+    span = ndimage.maximum_filter(z, 3) - ndimage.minimum_filter(z, 3)
+    flat = finite & (span < 0.02)
+    floor = ELEVATION.water_below_m
+    if floor is not None:
+        flat |= finite & (dem < floor)
+    labels, n = ndimage.label(flat)
+    if n == 0:
+        return flat
+    sizes = np.bincount(labels.ravel())
+    sizes[0] = 0
+    water = sizes[labels] >= min_px
+    # close the one-pixel seams that averaging leaves along shorelines
+    return ndimage.binary_opening(water, iterations=1)
+
+
 def build_hillshade(width_px: int = 1600) -> dict:
     """Quiet shaded relief in WGS84, as a palette PNG data URI with bounds."""
     import rasterio
@@ -354,7 +387,7 @@ def build_hillshade(width_px: int = 1600) -> dict:
                       resampling=Resampling.average)
             nod = src.nodata
         dem = np.where(np.isfinite(dem) & (dem != nod) & (dem > -50), dem, np.nan)
-        valid = np.isfinite(dem)
+        valid = np.isfinite(dem) & ~_water_mask(dem)
         filled = np.where(valid, dem, np.nanmedian(dem))
         px_m = abs(transform.a) * 111320 * np.cos(np.radians(CITY_LAT))
         hs = hillshade(filled, res=px_m, z_factor=1.8)

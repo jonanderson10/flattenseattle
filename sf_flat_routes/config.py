@@ -274,6 +274,18 @@ NEVER_ROUTABLE_CLASSES = frozenset({
 #: aggregation and street naming. See README "Limitations".
 NEVER_ROUTABLE_SUBCLASSES = frozenset({"sidewalk", "crosswalk", "driveway", "parking_aisle"})
 
+#: Many sidewalks reach Overture as plain ``footway`` with no subclass
+#: (Seattle's sidewalk import is mostly untagged), so the subclass filter
+#: above misses them. An unnamed, untagged footway is treated as a sidewalk
+#: when at least ``SIDEWALK_MIN_HITS`` of ``SIDEWALK_SAMPLES`` points along it
+#: lie within ``SIDEWALK_OFFSET_M`` of a walkable street and run within
+#: ``SIDEWALK_MAX_ANGLE_DEG`` of its direction. Set ``SIDEWALK_OFFSET_M`` to
+#: None to keep every footway, as upstream does.
+SIDEWALK_OFFSET_M: float | None = 12.0
+SIDEWALK_MAX_ANGLE_DEG = 30.0
+SIDEWALK_SAMPLES = 5
+SIDEWALK_MIN_HITS = 4
+
 WALK = ModeConfig(
     name="walk",
     allowed_classes=frozenset({

@@ -16,3 +16,4 @@ __pycache__/
 .venv/
 
 data/sensitivity/
+data/pre_sidewalk/

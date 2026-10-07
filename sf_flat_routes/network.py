@@ -34,7 +34,8 @@ import pandas as pd
 
 from .config import (BIKE_FORBIDDEN_CLASSES, CRS_GEOGRAPHIC, CRS_PROJECTED,
                      MODES, NEVER_ROUTABLE_CLASSES, NEVER_ROUTABLE_SUBCLASSES,
-                     PROCESSED_DIR)
+                     PROCESSED_DIR, SIDEWALK_MAX_ANGLE_DEG, SIDEWALK_MIN_HITS,
+                     SIDEWALK_OFFSET_M, SIDEWALK_SAMPLES)
 from .utils import get_logger, progress, step
 
 log = get_logger("sf_flat_routes.network")
@@ -245,6 +246,231 @@ def _split_geometries(df: pd.DataFrame):
     return rows
 
 
+#: classes that are not streets, for the purpose of finding sidewalks beside them
+_NON_STREET = frozenset({"footway", "path", "cycleway", "steps", "pedestrian",
+                         "track", "bridleway"})
+
+
+def _sidewalk_hits(cand, streets) -> tuple[np.ndarray, np.ndarray]:
+    """Count sample points per candidate that are near, and parallel to, a street."""
+    import shapely
+
+    k = SIDEWALK_SAMPLES
+    frac = np.tile(np.linspace(0.1, 0.9, k), len(cand))
+    lines = np.repeat(cand.geometry.values, k)
+    # a short tangent either side of each sample point, at most 2 m long
+    h = np.minimum(2.0 / np.maximum(shapely.length(lines), 1e-6), 0.05)
+    pts = shapely.line_interpolate_point(lines, frac, normalized=True)
+    a = shapely.line_interpolate_point(lines, frac - h, normalized=True)
+    b = shapely.line_interpolate_point(lines, frac + h, normalized=True)
+
+    tree = shapely.STRtree(streets.geometry.values)
+    ip, js = tree.query_nearest(pts, max_distance=SIDEWALK_OFFSET_M, all_matches=False)
+    sg = streets.geometry.values[js]
+    s = shapely.line_locate_point(sg, pts[ip])
+    sa = shapely.line_interpolate_point(sg, s - 2.0)
+    sb = shapely.line_interpolate_point(sg, s + 2.0)
+
+    def vec(p, q):
+        return np.c_[shapely.get_x(q) - shapely.get_x(p), shapely.get_y(q) - shapely.get_y(p)]
+
+    v1, v2 = vec(a[ip], b[ip]), vec(sa, sb)
+    cos = np.abs((v1 * v2).sum(1)) / (np.linalg.norm(v1, axis=1)
+                                      * np.linalg.norm(v2, axis=1) + 1e-9)
+    near = np.zeros(len(pts), dtype=bool)
+    near[ip] = True
+    par = np.zeros(len(pts), dtype=bool)
+    par[ip[cos >= np.cos(np.radians(SIDEWALK_MAX_ANGLE_DEG))]] = True
+    return near.reshape(-1, k).sum(1), par.reshape(-1, k).sum(1)
+
+
+def _keep_shortcuts(gdf, usable, is_cand, sidewalk, snap_m: float = 30.0,
+                    ratio: float = 1.25, slack_m: float = 25.0) -> int:
+    """Put back sidewalks the street network cannot stand in for.
+
+    A footway can run beside a street without being interchangeable with it:
+    the walkway across the Ballard Locks parallels a service road that stops
+    at the water. Each end of a dropped sidewalk is snapped to the nearest
+    node of the remaining network; if walking between those two nodes is much
+    longer than the sidewalk itself (or an end has nothing nearby), the
+    sidewalk is a shortcut and stays. Modifies ``sidewalk`` in place.
+    """
+    import networkx as nx
+    from scipy.spatial import cKDTree
+
+    u, v = gdf["u"].to_numpy(), gdf["v"].to_numpy()
+    length = gdf["length_m"].to_numpy()
+    start = np.array([g.coords[0] for g in gdf.geometry])
+    end = np.array([g.coords[-1] for g in gdf.geometry])
+
+    g = nx.Graph()
+    for i in np.flatnonzero(usable & ~sidewalk):
+        if not g.has_edge(u[i], v[i]) or g[u[i]][v[i]]["w"] > length[i]:
+            g.add_edge(u[i], v[i], w=float(length[i]))
+    # snap only to nodes of streets, paths and steps, not to other footway stubs
+    solid = usable & ~is_cand
+    xy = pd.concat([pd.DataFrame({"n": u[solid], "x": start[solid, 0], "y": start[solid, 1]}),
+                    pd.DataFrame({"n": v[solid], "x": end[solid, 0], "y": end[solid, 1]})]
+                   ).drop_duplicates("n")
+    xy = xy[xy["n"].isin(g)]
+    tree = cKDTree(xy[["x", "y"]].to_numpy())
+    nodes = xy["n"].to_numpy()
+
+    idx = np.flatnonzero(sidewalk)
+    da, ia = tree.query(start[idx])
+    db, ib = tree.query(end[idx])
+    a, b = nodes[ia], nodes[ib]
+    # an end that is still part of the network is its own snap point
+    for ends, snap, d in ((u[idx], a, da), (v[idx], b, db)):
+        live = np.fromiter((n in g for n in ends), bool, len(ends))
+        snap[live] = ends[live]
+        d[live] = 0.0
+    budget = ratio * (length[idx] + da + db) + slack_m
+    keep = (da > snap_m) | (db > snap_m)
+
+    order = pd.DataFrame({"a": a, "k": np.arange(len(idx))})
+    for src, grp in order[~keep].groupby("a"):
+        ks = grp["k"].to_numpy()
+        dist = nx.single_source_dijkstra_path_length(
+            g, src, cutoff=float(budget[ks].max()), weight="w")
+        for k in ks:
+            if dist.get(b[k], np.inf) > budget[k]:
+                keep[k] = True
+    sidewalk[idx[keep]] = False
+    return int(keep.sum())
+
+
+def drop_untagged_sidewalks(gdf):
+    """Remove sidewalks that Overture leaves as plain, untagged footways.
+
+    The analysis routes along street centrelines, and a sidewalk on each side
+    of every street triples the graph without changing a single route. A
+    footway is taken to be a sidewalk when it runs alongside a walkable street
+    (see ``SIDEWALK_OFFSET_M``). Three passes then repair the damage:
+
+    * A sidewalk that is shorter than any way round by street is kept (see
+      ``_keep_shortcuts``).
+    * Steps, trails and named walkways often join the sidewalk rather than the
+      street. Where dropping sidewalks would strand them, the shortest chain of
+      dropped sidewalk that reconnects them to the network is put back.
+    * Crossings and curb links are left dangling off the street once the
+      sidewalks they joined are gone. Untagged footway stubs that dead-end
+      inside a street's corridor are pruned, repeatedly, until none remain.
+    """
+    import networkx as nx
+
+    if SIDEWALK_OFFSET_M is None:
+        return gdf
+    usable = (gdf["walk_ok"] | gdf["bike_ok"]).to_numpy()
+    streets = gdf[~gdf["cls"].isin(_NON_STREET) & gdf["walk_ok"]]
+    is_cand = ((gdf["cls"] == "footway") & gdf["subclass"].isna()
+               & gdf["name"].isna() & ~gdf["is_structure"]).to_numpy() & usable
+    near, par = _sidewalk_hits(gdf[is_cand], streets)
+    sidewalk = np.zeros(len(gdf), dtype=bool)
+    stub = np.zeros(len(gdf), dtype=bool)
+    sidewalk[np.flatnonzero(is_cand)[par >= SIDEWALK_MIN_HITS]] = True
+    stub[np.flatnonzero(is_cand)[near >= SIDEWALK_MIN_HITS]] = True
+    stub &= ~sidewalk
+
+    u, v = gdf["u"].to_numpy(), gdf["v"].to_numpy()
+    length = gdf["length_m"].to_numpy()
+    detours = _keep_shortcuts(gdf, usable, is_cand, sidewalk)
+
+    # Reconnect: kept edges cost nothing, dropped sidewalk costs its length,
+    # so the shortest path from the main component to a stranded node runs
+    # over as little sidewalk as possible.
+    g = nx.Graph()
+    for i in np.flatnonzero(usable & ~sidewalk):
+        g.add_edge(u[i], v[i], w=0.0, eid=-1)
+    for i in np.flatnonzero(sidewalk):
+        if not g.has_edge(u[i], v[i]) or g[u[i]][v[i]]["w"] > length[i]:
+            g.add_edge(u[i], v[i], w=float(length[i]), eid=int(i))
+    kept = g.edge_subgraph((a, b) for a, b, d in g.edges(data=True) if d["eid"] < 0)
+    main = max(nx.connected_components(kept), key=len)
+    pred, _ = nx.dijkstra_predecessor_and_distance(g, next(iter(main)), weight="w")
+    important = usable & ~is_cand
+    anchors = set(u[important]) | set(v[important])
+    restored = 0
+    seen: set = set()
+    for node in anchors - main:
+        while node in pred and pred[node] and node not in seen:
+            seen.add(node)
+            prev = pred[node][0]
+            eid = g[prev][node]["eid"]
+            if eid >= 0 and sidewalk[eid]:
+                sidewalk[eid] = False
+                restored += 1
+            elif eid < 0 and prev in main:
+                break
+            node = prev
+
+    # Prune crossing and curb-link stubs left dead-ending off the street.
+    alive = usable & ~sidewalk
+    pruned = 0
+    while True:
+        ends = pd.Series(np.r_[u[alive], v[alive]]).value_counts()
+        deg_u = ends.reindex(u).fillna(0).to_numpy()
+        deg_v = ends.reindex(v).fillna(0).to_numpy()
+        dead = stub & alive & ((deg_u <= 1) | (deg_v <= 1))
+        if not dead.any():
+            break
+        alive &= ~dead
+        pruned += int(dead.sum())
+
+    drop = usable & ~alive
+    log.info("  untagged sidewalks: dropped %d edges (%.0f km); kept %d that are "
+             "shortcuts and %d that connect steps and paths; pruned %d dangling stubs",
+             int(sidewalk.sum()), length[sidewalk].sum() / 1000, detours, restored,
+             pruned)
+    return gdf[~drop].reset_index(drop=True)
+
+
+def merge_pass_through_nodes(gdf):
+    """Join consecutive pieces of one segment where nothing else meets them.
+
+    Segments are split at every connector, including the ones where a
+    driveway, crossing or sidewalk stub (all since removed) used to attach.
+    Those leave a street in pieces at nodes that join nothing but the two
+    pieces. Pieces of one segment share every attribute, so they can be put
+    back together without changing a route.
+    """
+    import shapely
+
+    deg = pd.concat([gdf["u"], gdf["v"]]).value_counts()
+    s = gdf.sort_values(["segment_id", "part"])
+    prev = s.groupby("segment_id")[["v"]].shift(1)["v"]
+    joins = (prev == s["u"]).to_numpy() & (deg.reindex(s["u"]).to_numpy() == 2)
+    run = np.cumsum(~joins)
+    first = s.groupby(run)["u"].transform("first").to_numpy()
+    last = s.groupby(run)["v"].transform("last").to_numpy()
+    # never fold a piece of a loop back onto itself
+    loop = pd.Series(first == last).groupby(run).transform("any").to_numpy()
+    multi = pd.Series(run).map(pd.Series(run).value_counts()).to_numpy() > 1
+    whole = ~multi | loop
+    if (~whole).sum() == 0:
+        return gdf
+    # a looped run is left in pieces: give each piece its own run id
+    run = np.where(loop, -np.arange(1, len(run) + 1), run)
+
+    s = s.assign(_run=run)
+    singles = s[whole]
+    merged = s[~whole]
+    rows = []
+    for _, grp in merged.groupby("_run", sort=False):
+        coords = [np.asarray(g.coords) for g in grp.geometry]
+        line = np.vstack([coords[0]] + [c[1:] for c in coords[1:]])
+        row = grp.iloc[0].copy()
+        row["v"] = grp["v"].iloc[-1]
+        row["geometry"] = shapely.LineString(line)
+        row["length_m"] = grp["length_m"].sum()
+        rows.append(row)
+    out = pd.concat([singles, pd.DataFrame(rows)], ignore_index=True)
+    out = out.drop(columns="_run").sort_values(["segment_id", "part"]).reset_index(drop=True)
+    log.info("  merged %d pieces into %d edges at pass-through nodes (%d -> %d edges)",
+             len(merged), len(rows), len(gdf), len(out))
+    return out.set_geometry("geometry", crs=gdf.crs)
+
+
 def build_edges(segments_path: Path, force: bool = False,
                 clip_to_city: bool = True) -> "pd.DataFrame":
     """Produce the undirected edge table with geometry, class and access.
@@ -302,6 +528,11 @@ def build_edges(segments_path: Path, force: bool = False,
             gdf[f"{mode_name}_ok"] = ok & gdf[f"{mode_name}_allowed"]
             log.info("  %s: %d of %d edges routable", mode_name,
                      int(gdf[f"{mode_name}_ok"].sum()), len(gdf))
+
+    with step("dropping untagged sidewalks", log):
+        gdf = drop_untagged_sidewalks(gdf)
+    with step("merging pass-through nodes", log):
+        gdf = merge_pass_through_nodes(gdf)
 
     # bicycle infrastructure / low-stress proxy (SFMTA data unavailable)
     gdf["bike_facility"] = np.where(
